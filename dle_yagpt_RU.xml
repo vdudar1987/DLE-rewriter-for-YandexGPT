@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="utf-8"?>
+<dleplugin>
+	<name>DLE RusGPT v1.0</name>
+	<description>Профессиональный ИИ-модуль для DLE на русском языке с поддержкой YandexGPT и GigaChat: генерация контента, пакетная обработка, планировщик Cron, SEO-метаданные, ревизии, квоты и двуязычный режим (RU/EN).</description>
+	<icon></icon>
+	<version>1.0</version>
+	<dleversion>13.0</dleversion>
+	<versioncompare>greater</versioncompare>
+	<upgradeurl></upgradeurl>
+	<filedelete>0</filedelete>
+	<needplugin></needplugin>
+	<mnotice>0</mnotice>
+	<mysqlinstall><![CDATA[
+CREATE TABLE IF NOT EXISTS {prefix}_catman_settings (
+    `name` VARCHAR(50) NOT NULL PRIMARY KEY,
+    `value` TEXT NULL
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+CREATE TABLE IF NOT EXISTS {prefix}_catman_logs (
+    `id` INT(11) NOT NULL AUTO_INCREMENT,
+    `category_id` INT(11) NOT NULL,
+    `tokens_used` INT(11) NOT NULL DEFAULT '0',
+    `model` VARCHAR(50) NOT NULL,
+    `timestamp` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `status` ENUM('success', 'failed') NOT NULL DEFAULT 'success',
+    `error_message` TEXT NULL,
+    `cost_estimated` DECIMAL(10,6) NOT NULL DEFAULT '0.000000',
+    `content_type` VARCHAR(20) DEFAULT 'category',
+    `language` VARCHAR(10) DEFAULT 'ru',
+    PRIMARY KEY (`id`),
+    KEY `idx_timestamp` (`timestamp`),
+    KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+CREATE TABLE IF NOT EXISTS {prefix}_catman_drafts (
+    `id` INT(11) NOT NULL AUTO_INCREMENT,
+    `category_id` INT(11) NOT NULL,
+    `meta_title` VARCHAR(255) NULL,
+    `meta_descr` TEXT NULL,
+    `keywords` TEXT NULL,
+    `description` LONGTEXT NULL,
+    `short_story` LONGTEXT NULL,
+    `full_story` LONGTEXT NULL,
+    `tags` TEXT NULL,
+    `alt_name` VARCHAR(100) NULL,
+    `language` VARCHAR(10) DEFAULT 'ru',
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `status` ENUM('draft', 'approved', 'revision') NOT NULL DEFAULT 'draft',
+    `template_id` INT(11) DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    KEY `idx_status` (`status`),
+    KEY `idx_category` (`category_id`)
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+CREATE TABLE IF NOT EXISTS {prefix}_catman_templates (
+    `id` INT(11) NOT NULL AUTO_INCREMENT,
+    `name` VARCHAR(100) NOT NULL,
+    `description` TEXT NULL,
+    `category_ids` TEXT NULL,
+    `prompt_meta_title` TEXT NULL,
+    `prompt_meta_descr` TEXT NULL,
+    `prompt_keywords` TEXT NULL,
+    `prompt_description` TEXT NULL,
+    `prompt_news` TEXT NULL,
+    `word_limit` INT(11) DEFAULT 500,
+    `tag_count` INT(11) DEFAULT 10,
+    `is_default` TINYINT(1) DEFAULT 0,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+CREATE TABLE IF NOT EXISTS {prefix}_catman_schedules (
+    `id` INT(11) NOT NULL AUTO_INCREMENT,
+    `name` VARCHAR(100) NOT NULL,
+    `task_type` ENUM('category', 'news', 'batch') NOT NULL,
+    `category_ids` TEXT NULL,
+    `schedule_type` ENUM('once', 'hourly', 'daily', 'weekly', 'monthly') NOT NULL,
+    `schedule_time` TIME DEFAULT '00:00:00',
+    `schedule_day` INT(11) DEFAULT 0,
+    `template_id` INT(11) DEFAULT NULL,
+    `language` VARCHAR(10) DEFAULT 'ru',
+    `auto_approve` TINYINT(1) DEFAULT 0,
+    `is_active` TINYINT(1) DEFAULT 1,
+    `last_run` DATETIME NULL,
+    `next_run` DATETIME NULL,
+    `run_count` INT(11) DEFAULT 0,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_next_run` (`next_run`),
+    KEY `idx_active` (`is_active`)
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+CREATE TABLE IF NOT EXISTS {prefix}_catman_queue (
+    `id` INT(11) NOT NULL AUTO_INCREMENT,
+    `batch_id` VARCHAR(50) NOT NULL,
+    `item_type` ENUM('category', 'news') NOT NULL,
+    `item_id` INT(11) NOT NULL,
+    `item_title` VARCHAR(255) NULL,
+    `template_id` INT(11) DEFAULT NULL,
+    `language` VARCHAR(10) DEFAULT 'ru',
+    `status` ENUM('pending', 'processing', 'completed', 'failed') NOT NULL DEFAULT 'pending',
+    `error_message` TEXT NULL,
+    `result_draft_id` INT(11) NULL,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `started_at` DATETIME NULL,
+    `completed_at` DATETIME NULL,
+    PRIMARY KEY (`id`),
+    KEY `idx_batch` (`batch_id`),
+    KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+CREATE TABLE IF NOT EXISTS {prefix}_catman_quota (
+    `id` INT(11) NOT NULL AUTO_INCREMENT,
+    `provider` VARCHAR(20) NOT NULL,
+    `period` ENUM('daily', 'weekly', 'monthly') DEFAULT 'monthly',
+    `token_limit` INT(11) DEFAULT 1000000,
+    `tokens_used` INT(11) DEFAULT 0,
+    `request_limit` INT(11) DEFAULT 1000,
+    `requests_used` INT(11) DEFAULT 0,
+    `cost_limit` DECIMAL(10,2) DEFAULT 100.00,
+    `cost_used` DECIMAL(10,6) DEFAULT 0.000000,
+    `period_start` DATE NOT NULL,
+    `period_end` DATE NOT NULL,
+    `is_unlimited` TINYINT(1) DEFAULT 0,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `idx_provider_period` (`provider`, `period_start`)
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+CREATE TABLE IF NOT EXISTS {prefix}_catman_revisions (
+    `id` INT(11) NOT NULL AUTO_INCREMENT,
+    `draft_id` INT(11) NOT NULL,
+    `revision_type` ENUM('rewrite', 'improve', 'summarize', 'expand', 'translate') NOT NULL,
+    `original_content` LONGTEXT NULL,
+    `revised_content` LONGTEXT NULL,
+    `model` VARCHAR(50) NULL,
+    `tokens_used` INT(11) DEFAULT 0,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_draft` (`draft_id`)
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+INSERT IGNORE INTO {prefix}_catman_settings (`name`, `value`) VALUES
+('default_model', 'yandexgpt-lite'),
+('news_word_limit', '500'),
+('news_tag_count', '10'),
+('default_language', 'ru'),
+('available_languages', 'ru,en'),
+('auto_approve', '0'),
+('batch_delay', '3'),
+('prompt_meta_title', 'Создай SEO-заголовок для категории: {cat_name}'),
+('prompt_meta_descr', 'Напиши привлекательное SEO-описание для категории: {cat_name}'),
+('prompt_keywords', 'Сформируй 10 ключевых слов через запятую для категории: {cat_name}'),
+('prompt_description', 'Сгенерируй подробное HTML-описание для категории: {cat_name}. Используй HTML-теги.'),
+('prompt_news_generation', 'Тема: {title}. Верни JSON с ключами: short_story (краткий анонс), full_story (полная статья с заголовками H2-H3), meta_title, meta_descr (до 160 символов), keywords (через запятую), tags (через запятую, {tag_count} шт.), alt_name (URL slug, 3-5 слов). Объём статьи не менее {word_limit} слов. Язык: {language}.'),
+('prompt_rewrite', 'Перепиши текст, сохранив смысл, но сделай его более интересным: {content}'),
+('prompt_improve', 'Улучш текст с точки зрения читабельности и SEO: {content}'),
+('prompt_summarize', 'Сделай краткое и ёмкое резюме текста: {content}'),
+('prompt_expand', 'Раскрой тему подробнее, добавь детали и примеры: {content}'),
+('prompt_translate', 'Переведи текст на язык {target_language}: {content}');
+
+INSERT IGNORE INTO {prefix}_catman_templates (`id`, `name`, `description`, `is_default`) VALUES
+(1, 'Шаблон по умолчанию', 'Базовый шаблон генерации контента для всех категорий', 1);
+
+INSERT IGNORE INTO {prefix}_catman_quota (`provider`, `period`, `period_start`, `period_end`) VALUES
+('yandexgpt', 'monthly', CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 MONTH)),
+('gigachat', 'monthly', CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 MONTH));
+
+INSERT IGNORE INTO {prefix}_admin_sections (`name`, `title`, `descr`, `icon`, `allow_groups`) VALUES
+('catman', 'DLE RusGPT', 'Русский ИИ-движок контента', '', '1');
+]]></mysqlinstall>
+	<mysqluninstall><![CDATA[
+DROP TABLE IF EXISTS {prefix}_catman_settings;
+DROP TABLE IF EXISTS {prefix}_catman_logs;
+DROP TABLE IF EXISTS {prefix}_catman_drafts;
+DROP TABLE IF EXISTS {prefix}_catman_templates;
+DROP TABLE IF EXISTS {prefix}_catman_schedules;
+DROP TABLE IF EXISTS {prefix}_catman_queue;
+DROP TABLE IF EXISTS {prefix}_catman_quota;
+DROP TABLE IF EXISTS {prefix}_catman_revisions;
+DELETE FROM {prefix}_admin_sections WHERE name='catman';
+]]></mysqluninstall>
+	<mysqlenable><![CDATA[
+INSERT IGNORE INTO {prefix}_admin_sections (`name`, `title`, `descr`, `icon`, `allow_groups`) VALUES
+('catman', 'DLE RusGPT', 'Русский ИИ-движок контента', '', '1');
+]]></mysqlenable>
+	<mysqldisable><![CDATA[
+DELETE FROM {prefix}_admin_sections WHERE name='catman';
+]]></mysqldisable>
+</dleplugin>
