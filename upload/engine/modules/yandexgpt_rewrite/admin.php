@@ -102,8 +102,8 @@ if ($action === 'save_settings') {
     yagptCheckCsrfToken();
 
     $config['enabled'] = !empty($_POST['enabled']);
-    $config['api_key'] = trim((string)($_POST['api_key'] ?? ''));
-    $config['catalog_id'] = trim((string)($_POST['catalog_id'] ?? ''));
+    $config['oauth_token'] = trim((string)($_POST['oauth_token'] ?? ''));
+    $config['folder_id'] = trim((string)($_POST['folder_id'] ?? ''));
     $config['model_uri'] = trim((string)($_POST['model_uri'] ?? $config['model_uri']));
     $config['temperature'] = (float)($_POST['temperature'] ?? $config['temperature']);
     $config['max_tokens'] = max(1, (int)($_POST['max_tokens'] ?? $config['max_tokens']));
@@ -149,13 +149,13 @@ $userHash = (string)($_SESSION['dle_user_hash'] ?? '');
             </div>
 
             <div class="form-group">
-                <label class="col-md-2 control-label">API Key</label>
-                <div class="col-md-10"><input type="text" class="form-control" name="api_key" value="<?=htmlspecialchars((string)$config['api_key'], ENT_QUOTES, 'UTF-8');?>"></div>
+                <label class="col-md-2 control-label">OAuth-токен</label>
+                <div class="col-md-10"><input type="text" class="form-control" name="oauth_token" value="<?=htmlspecialchars((string)$config['oauth_token'], ENT_QUOTES, 'UTF-8');?>"></div>
             </div>
 
             <div class="form-group">
-                <label class="col-md-2 control-label">Catalog ID</label>
-                <div class="col-md-10"><input type="text" class="form-control" name="catalog_id" value="<?=htmlspecialchars((string)$config['catalog_id'], ENT_QUOTES, 'UTF-8');?>"></div>
+                <label class="col-md-2 control-label">Folder ID</label>
+                <div class="col-md-10"><input type="text" class="form-control" name="folder_id" value="<?=htmlspecialchars((string)$config['folder_id'], ENT_QUOTES, 'UTF-8');?>"></div>
             </div>
 
             <div class="form-group">

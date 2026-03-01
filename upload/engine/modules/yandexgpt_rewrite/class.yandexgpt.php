@@ -9,8 +9,26 @@ class YandexGptRewrite
 
     public function __construct(array $config, ?\PDO $pdo = null)
     {
-        $this->config = $config;
+        $this->config = $this->normalizeConfig($config);
         $this->pdo = $pdo;
+    }
+
+
+    private function normalizeConfig(array $config): array
+    {
+        if (empty($config['oauth_token']) && !empty($config['api_key'])) {
+            $config['oauth_token'] = (string)$config['api_key'];
+        }
+
+        if (empty($config['folder_id']) && !empty($config['catalog_id'])) {
+            $config['folder_id'] = (string)$config['catalog_id'];
+        }
+
+        if (!isset($config['model_uri']) || $config['model_uri'] === '') {
+            $config['model_uri'] = 'gpt://{folder_id}/yandexgpt/latest';
+        }
+
+        return $config;
     }
 
     public function processArticle(array $article): array
@@ -187,12 +205,12 @@ class YandexGptRewrite
 
     private function sendPrompt(string $prompt): string
     {
-        if (!$this->config['enabled'] || empty($this->config['api_key']) || empty($this->config['catalog_id'])) {
-            throw new \RuntimeException('YandexGPT не настроен: заполните api_key и catalog_id.');
+        if (!$this->config['enabled'] || empty($this->config['oauth_token']) || empty($this->config['folder_id'])) {
+            throw new \RuntimeException('YandexGPT не настроен: заполните OAuth-токен и Folder ID.');
         }
 
-        $catalogId = $this->config['catalog_id'];
-        $modelUri = str_replace('{catalog_id}', $catalogId, $this->config['model_uri']);
+        $folderId = (string)$this->config['folder_id'];
+        $modelUri = str_replace(['{folder_id}', '{catalog_id}'], $folderId, (string)$this->config['model_uri']);
 
         $payload = [
             'modelUri' => $modelUri,
@@ -218,9 +236,9 @@ class YandexGptRewrite
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_POST => true,
                 CURLOPT_HTTPHEADER => [
-                    'Authorization: Api-Key ' . $this->config['api_key'],
+                    'Authorization: Bearer ' . $this->config['oauth_token'],
                     'Content-Type: application/json',
-                    'x-folder-id: ' . $catalogId,
+                    'x-folder-id: ' . $folderId,
                 ],
                 CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE),
                 CURLOPT_TIMEOUT => $timeout,

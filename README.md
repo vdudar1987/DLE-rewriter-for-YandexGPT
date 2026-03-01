@@ -1,6 +1,6 @@
 # YandexGPT Rewrite DLE
 
-Модуль для DataLife Engine, повторяющий концепцию ChatGPT Rewrite DLE, но с интеграцией YandexGPT (Yandex Cloud Foundation Models API).
+Модуль для DataLife Engine, повторяющий концепцию ChatGPT Rewrite DLE, но с интеграцией YandexGPT (Yandex Cloud Foundation Models API) с авторизацией через OAuth-токен и Folder ID.
 
 ## Что реализовано
 
@@ -31,8 +31,8 @@
 1. Скопируйте папку `upload` в корень DLE-проекта.
 2. Выполните SQL из `install.sql`.
 3. В `engine/data/yandexgpt_rewrite.php` заполните:
-   - `api_key` — API-ключ Yandex Cloud;
-   - `catalog_id` — ID каталога Yandex Cloud;
+   - `oauth_token` — OAuth-токен Yandex Cloud (Bearer);
+   - `folder_id` — Folder ID в Yandex Cloud;
    - при необходимости `model_uri`, `temperature`, `max_tokens`, `retry_*`.
 4. Подключите модуль в админ-панели DLE (меню/роутинг) и добавьте AI-кнопки в шаблоны `addnews/editnews` на `ajax.php`.
 
