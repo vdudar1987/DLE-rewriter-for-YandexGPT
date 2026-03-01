@@ -2,9 +2,9 @@
 
 return [
     'enabled' => true,
-    'api_key' => '',
-    'catalog_id' => '',
-    'model_uri' => 'gpt://{catalog_id}/yandexgpt/latest',
+    'oauth_token' => '',
+    'folder_id' => '',
+    'model_uri' => 'gpt://{folder_id}/yandexgpt/latest',
     'temperature' => 0.7,
     'max_tokens' => 900,
     'retry_attempts' => 2,
