@@ -272,8 +272,35 @@ class YandexGptRewrite
         return $variables;
     }
 
-    private function parseXFields(string $raw): array
+    private function parseXFields($raw): array
     {
+        if (is_array($raw)) {
+            return $raw;
+        }
+
+        $raw = (string)$raw;
+
+        if ($raw === '') {
+            return [];
+        }
+
+        if ($raw[0] === '{' || $raw[0] === '[') {
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                $result = [];
+                foreach ($decoded as $name => $value) {
+                    $name = trim((string)$name);
+                    if ($name === '') {
+                        continue;
+                    }
+
+                    $result[$name] = is_scalar($value) || $value === null ? (string)$value : json_encode($value, JSON_UNESCAPED_UNICODE);
+                }
+
+                return $result;
+            }
+        }
+
         $rows = explode('||', $raw);
         $result = [];
         foreach ($rows as $row) {

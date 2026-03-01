@@ -1330,6 +1330,117 @@ HTML;
 		return false;
 
 	};
+
+	function yagptSetFieldValue(fieldId, value) {
+		if (typeof value !== 'string') {
+			return;
+		}
+
+		if (typeof tinyMCE !== 'undefined' && tinyMCE.get(fieldId)) {
+			tinyMCE.get(fieldId).setContent(value);
+			tinyMCE.triggerSave();
+		}
+
+		if ($('#' + fieldId).length) {
+			$('#' + fieldId).val(value);
+		}
+	}
+
+	function yagptGetXfieldsPayload() {
+		var xfields = {};
+
+		$('[id^=\'xf_\']').each(function() {
+			var fieldName = this.id.substring(3);
+			if (!fieldName) {
+				return;
+			}
+
+			xfields[fieldName] = $(this).val();
+		});
+
+		return xfields;
+	}
+
+	function yagptApplyXfields(resultXfields) {
+		if (!resultXfields || typeof resultXfields !== 'object') {
+			return;
+		}
+
+		Object.keys(resultXfields).forEach(function(fieldName) {
+			var value = resultXfields[fieldName];
+			if (typeof value !== 'string') {
+				return;
+			}
+
+			var byId = $('#xf_' + fieldName);
+			if (byId.length) {
+				byId.val(value).trigger('change');
+				return;
+			}
+
+			var byName = $('[name=\'xfield[' + fieldName + ']\'], [name=\'xf_' + fieldName + '\']');
+			if (byName.length) {
+				byName.val(value).trigger('change');
+			}
+		});
+	}
+
+	function yagptRewriteDraft() {
+		tinyMCE.triggerSave();
+
+		var button = $('#yagpt-rewrite-btn');
+		button.prop('disabled', true);
+
+		ShowLoading('');
+
+		$.ajax({
+			url: 'engine/modules/yandexgpt_rewrite/ajax.php',
+			type: 'POST',
+			dataType: 'json',
+			data: {
+				user_hash: '{$dle_login_hash}',
+				title: $('#title').val() || '',
+				short_story: $('#short_story').val() || '',
+				full_story: $('#full_story').val() || '',
+				xfields: JSON.stringify(yagptGetXfieldsPayload())
+			}
+		}).done(function(response) {
+			if (!response || !response.success || !response.result) {
+				DLEPush.error(response && response.error ? response.error : 'Не удалось получить ответ от AI.');
+				return;
+			}
+
+			yagptSetFieldValue('title', response.result.title || '');
+			yagptSetFieldValue('short_story', response.result.short_story || '');
+			yagptSetFieldValue('full_story', response.result.full_story || '');
+
+			if ($('#autodescr').length) {
+				$('#autodescr').val(response.result.meta_description || '');
+			}
+
+			if ($('#keywords').length) {
+				if ($('#keywords').data('bs.tokenfield')) {
+					$('#keywords').tokenfield('setTokens', response.result.keywords || '');
+				} else {
+					$('#keywords').val(response.result.keywords || '');
+				}
+			}
+
+			yagptApplyXfields(response.result.xfields || {});
+			DLEPush.success('AI-данные успешно подставлены в форму.');
+		}).fail(function(xhr) {
+			var message = 'Ошибка при обращении к AI-модулю.';
+			if (xhr.responseJSON && xhr.responseJSON.error) {
+				message = xhr.responseJSON.error;
+			}
+			DLEPush.error(message);
+		}).always(function() {
+			HideLoading('');
+			button.prop('disabled', false);
+		});
+
+		return false;
+	}
 	
 	function find_related_ids ( id ){
 
@@ -1791,7 +1902,7 @@ HTML;
 							<div class="form-group">
 							  <label class="control-label col-sm-2">{$lang['edit_et']}</label>
 							  <div class="col-sm-10">
-								<input type="text" dir="auto" class="form-control width-550 position-left" name="title" id="title" value="{$row['title']}" maxlength="250"><input type="button" onclick="find_relates(); return false;" class="visible-lg-inline-block btn bg-info-800 btn-sm btn-raised" value="{$lang['b_find_related']}"><i class="help-button visible-lg-inline-block text-primary-600 fa fa-question-circle position-right" data-rel="popover" data-trigger="hover" data-placement="auto right" data-content="{$lang['hint_title']}" ></i><span id="related_news"></span>
+							<input type="text" dir="auto" class="form-control width-550 position-left" name="title" id="title" value="{$row['title']}" maxlength="250"><input type="button" onclick="find_relates(); return false;" class="visible-lg-inline-block btn bg-info-800 btn-sm btn-raised" value="{$lang['b_find_related']}"><input type="button" id="yagpt-rewrite-btn" onclick="yagptRewriteDraft(); return false;" class="visible-lg-inline-block btn bg-success-600 btn-sm btn-raised" value="AI"><i class="help-button visible-lg-inline-block text-primary-600 fa fa-question-circle position-right" data-rel="popover" data-trigger="hover" data-placement="auto right" data-content="{$lang['hint_title']}" ></i><span id="related_news"></span>
 							  </div>
 							 </div>
 
