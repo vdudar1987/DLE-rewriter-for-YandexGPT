@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS `dle_yagpt_log` (
   `post_id` int unsigned NOT NULL,
   `processed_at` datetime NOT NULL,
   `used_variables` mediumtext,
+  `before_payload` longtext,
   `payload` longtext,
   PRIMARY KEY (`id`),
   KEY `post_id` (`post_id`),

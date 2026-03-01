@@ -43,7 +43,7 @@ class YandexGptRewrite
         $processed = [];
         while ($article = $stmt->fetch(\PDO::FETCH_ASSOC)) {
             $result = $this->processArticle($article);
-            $this->persistResult((int)$article['id'], $result, (int)($article['disable_index'] ?? 0));
+            $this->persistResult((int)$article['id'], $article, $result, (int)($article['disable_index'] ?? 0));
             $processed[] = ['id' => (int)$article['id'], 'title' => $article['title'], 'status' => 'done'];
         }
 
@@ -77,7 +77,7 @@ class YandexGptRewrite
         while ($article = $stmt->fetch(\PDO::FETCH_ASSOC)) {
             try {
                 $result = $this->processArticle($article);
-                $this->persistResult((int)$article['id'], $result, (int)($article['disable_index'] ?? 0));
+                $this->persistResult((int)$article['id'], $article, $result, (int)($article['disable_index'] ?? 0));
                 $items[] = ['id' => (int)$article['id'], 'status' => 'done'];
             } catch (\Throwable $e) {
                 $items[] = ['id' => (int)$article['id'], 'status' => 'error', 'error' => $e->getMessage()];
@@ -85,6 +85,60 @@ class YandexGptRewrite
         }
 
         return $items;
+    }
+
+    public function processSingleById(int $id): array
+    {
+        if ($this->pdo === null || $id <= 0) {
+            throw new \InvalidArgumentException('Некорректный ID новости.');
+        }
+
+        $stmt = $this->pdo->prepare('SELECT id, title, short_story, full_story, xfields, disable_index, category FROM dle_post WHERE id = :id LIMIT 1');
+        $stmt->execute([':id' => $id]);
+        $article = $stmt->fetch(\PDO::FETCH_ASSOC);
+
+        if (!$article) {
+            throw new \RuntimeException('Новость не найдена.');
+        }
+
+        $result = $this->processArticle($article);
+        $this->persistResult((int)$article['id'], $article, $result, (int)($article['disable_index'] ?? 0));
+
+        return ['id' => (int)$article['id'], 'title' => (string)$article['title'], 'status' => 'done'];
+    }
+
+    public function getLogs(int $limit = 50): array
+    {
+        if ($this->pdo === null) {
+            return [];
+        }
+
+        $limit = max(1, min(200, $limit));
+        $sql = 'SELECT l.id, l.post_id, l.processed_at, p.title FROM dle_yagpt_log l LEFT JOIN dle_post p ON p.id = l.post_id ORDER BY l.id DESC LIMIT ' . $limit;
+        $stmt = $this->pdo->query($sql);
+
+        return $stmt ? $stmt->fetchAll(\PDO::FETCH_ASSOC) : [];
+    }
+
+    public function getLogById(int $id): ?array
+    {
+        if ($this->pdo === null || $id <= 0) {
+            return null;
+        }
+
+        $stmt = $this->pdo->prepare('SELECT * FROM dle_yagpt_log WHERE id = :id LIMIT 1');
+        $stmt->execute([':id' => $id]);
+        $log = $stmt->fetch(\PDO::FETCH_ASSOC);
+
+        if (!$log) {
+            return null;
+        }
+
+        $log['before_payload'] = json_decode((string)($log['before_payload'] ?? '{}'), true) ?: [];
+        $log['payload'] = json_decode((string)($log['payload'] ?? '{}'), true) ?: [];
+        $log['used_variables'] = json_decode((string)($log['used_variables'] ?? '[]'), true) ?: [];
+
+        return $log;
     }
 
     private function rewriteOrGenerate(string $field, string $source, array $variables): string
@@ -245,7 +299,7 @@ class YandexGptRewrite
         return implode('||', $out);
     }
 
-    private function persistResult(int $id, array $result, int $disableIndex): void
+    private function persistResult(int $id, array $before, array $result, int $disableIndex): void
     {
         if ($this->pdo === null) {
             return;
@@ -264,20 +318,26 @@ class YandexGptRewrite
             ':id' => $id,
         ]);
 
-        $this->writeLog($id, $result);
+        $this->writeLog($id, $before, $result);
     }
 
-    private function writeLog(int $id, array $result): void
+    private function writeLog(int $id, array $before, array $result): void
     {
         if ($this->pdo === null) {
             return;
         }
 
-        $sql = 'INSERT INTO dle_yagpt_log (post_id, processed_at, used_variables, payload) VALUES (:post_id, NOW(), :used_variables, :payload)';
+        $sql = 'INSERT INTO dle_yagpt_log (post_id, processed_at, used_variables, before_payload, payload) VALUES (:post_id, NOW(), :used_variables, :before_payload, :payload)';
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute([
             ':post_id' => $id,
             ':used_variables' => json_encode($result['used_variables'], JSON_UNESCAPED_UNICODE),
+            ':before_payload' => json_encode([
+                'title' => (string)($before['title'] ?? ''),
+                'short_story' => (string)($before['short_story'] ?? ''),
+                'full_story' => (string)($before['full_story'] ?? ''),
+                'xfields' => (string)($before['xfields'] ?? ''),
+            ], JSON_UNESCAPED_UNICODE),
             ':payload' => json_encode($result, JSON_UNESCAPED_UNICODE),
         ]);
     }
