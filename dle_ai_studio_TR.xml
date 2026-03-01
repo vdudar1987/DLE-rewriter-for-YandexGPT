@@ -1,0 +1,3106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<dleplugin>
+	<name>DLE AI Studio - YZ İçerik Motoru v1.0</name>
+	<description>OpenAI, Gemini, Claude ve Qwen kullanarak kategori ve haber içerikleri oluşturan profesyonel YZ modülü. Toplu işlem, zamanlama, görsel üretimi, şablonlar, revizyon, raporlama, kota ve çok dilli destek içerir.</description>
+	<icon></icon>
+	<version>1.0</version>
+	<dleversion>13.0</dleversion>
+	<versioncompare>greater</versioncompare>
+	<upgradeurl></upgradeurl>
+	<filedelete>0</filedelete>
+	<needplugin></needplugin>
+	<mnotice>0</mnotice>
+	<mysqlinstall><![CDATA[CREATE TABLE IF NOT EXISTS {prefix}_catman_settings (
+    `name` VARCHAR(50) NOT NULL PRIMARY KEY,
+    `value` TEXT NULL
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+CREATE TABLE IF NOT EXISTS {prefix}_catman_logs (
+    `id` INT(11) NOT NULL AUTO_INCREMENT,
+    `category_id` INT(11) NOT NULL,
+    `tokens_used` INT(11) NOT NULL DEFAULT '0',
+    `model` VARCHAR(50) NOT NULL,
+    `timestamp` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `status` ENUM('success', 'failed') NOT NULL DEFAULT 'success',
+    `error_message` TEXT NULL,
+    `cost_estimated` DECIMAL(10,6) NOT NULL DEFAULT '0.000000',
+    `content_type` VARCHAR(20) DEFAULT 'category',
+    `language` VARCHAR(10) DEFAULT 'tr',
+    PRIMARY KEY (`id`),
+    KEY `idx_timestamp` (`timestamp`),
+    KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+CREATE TABLE IF NOT EXISTS {prefix}_catman_drafts (
+    `id` INT(11) NOT NULL AUTO_INCREMENT,
+    `category_id` INT(11) NOT NULL,
+    `meta_title` VARCHAR(255) NULL,
+    `meta_descr` TEXT NULL,
+    `keywords` TEXT NULL,
+    `description` LONGTEXT NULL,
+    `short_story` LONGTEXT NULL,
+    `full_story` LONGTEXT NULL,
+    `tags` TEXT NULL,
+    `alt_name` VARCHAR(100) NULL,
+    `image_url` VARCHAR(500) NULL,
+    `language` VARCHAR(10) DEFAULT 'tr',
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `status` ENUM('draft', 'approved', 'revision') NOT NULL DEFAULT 'draft',
+    `template_id` INT(11) DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    KEY `idx_status` (`status`),
+    KEY `idx_category` (`category_id`)
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+-- FEATURE 1: Content Templates
+CREATE TABLE IF NOT EXISTS {prefix}_catman_templates (
+    `id` INT(11) NOT NULL AUTO_INCREMENT,
+    `name` VARCHAR(100) NOT NULL,
+    `description` TEXT NULL,
+    `category_ids` TEXT NULL,
+    `prompt_meta_title` TEXT NULL,
+    `prompt_meta_descr` TEXT NULL,
+    `prompt_keywords` TEXT NULL,
+    `prompt_description` TEXT NULL,
+    `prompt_news` TEXT NULL,
+    `prompt_image` TEXT NULL,
+    `word_limit` INT(11) DEFAULT 500,
+    `tag_count` INT(11) DEFAULT 10,
+    `is_default` TINYINT(1) DEFAULT 0,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+-- FEATURE 2: Scheduled Tasks
+CREATE TABLE IF NOT EXISTS {prefix}_catman_schedules (
+    `id` INT(11) NOT NULL AUTO_INCREMENT,
+    `name` VARCHAR(100) NOT NULL,
+    `task_type` ENUM('category', 'news', 'batch') NOT NULL,
+    `category_ids` TEXT NULL,
+    `schedule_type` ENUM('once', 'hourly', 'daily', 'weekly', 'monthly') NOT NULL,
+    `schedule_time` TIME DEFAULT '00:00:00',
+    `schedule_day` INT(11) DEFAULT 0,
+    `template_id` INT(11) DEFAULT NULL,
+    `language` VARCHAR(10) DEFAULT 'tr',
+    `generate_image` TINYINT(1) DEFAULT 0,
+    `auto_approve` TINYINT(1) DEFAULT 0,
+    `is_active` TINYINT(1) DEFAULT 1,
+    `last_run` DATETIME NULL,
+    `next_run` DATETIME NULL,
+    `run_count` INT(11) DEFAULT 0,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_next_run` (`next_run`),
+    KEY `idx_active` (`is_active`)
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+-- FEATURE 3: Batch Queue
+CREATE TABLE IF NOT EXISTS {prefix}_catman_queue (
+    `id` INT(11) NOT NULL AUTO_INCREMENT,
+    `batch_id` VARCHAR(50) NOT NULL,
+    `item_type` ENUM('category', 'news') NOT NULL,
+    `item_id` INT(11) NOT NULL,
+    `item_title` VARCHAR(255) NULL,
+    `template_id` INT(11) DEFAULT NULL,
+    `language` VARCHAR(10) DEFAULT 'tr',
+    `generate_image` TINYINT(1) DEFAULT 0,
+    `status` ENUM('pending', 'processing', 'completed', 'failed') NOT NULL DEFAULT 'pending',
+    `error_message` TEXT NULL,
+    `result_draft_id` INT(11) NULL,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `started_at` DATETIME NULL,
+    `completed_at` DATETIME NULL,
+    PRIMARY KEY (`id`),
+    KEY `idx_batch` (`batch_id`),
+    KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+-- FEATURE 4: Image Generation Logs
+CREATE TABLE IF NOT EXISTS {prefix}_catman_images (
+    `id` INT(11) NOT NULL AUTO_INCREMENT,
+    `draft_id` INT(11) NULL,
+    `prompt` TEXT NOT NULL,
+    `image_url` VARCHAR(500) NULL,
+    `local_path` VARCHAR(500) NULL,
+    `provider` VARCHAR(20) DEFAULT 'openai',
+    `size` VARCHAR(20) DEFAULT '1024x1024',
+    `tokens_used` INT(11) DEFAULT 0,
+    `cost` DECIMAL(10,6) DEFAULT 0.000000,
+    `status` ENUM('pending', 'completed', 'failed') NOT NULL DEFAULT 'pending',
+    `error_message` TEXT NULL,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_draft` (`draft_id`)
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+-- FEATURE 5: API Quota Management
+CREATE TABLE IF NOT EXISTS {prefix}_catman_quota (
+    `id` INT(11) NOT NULL AUTO_INCREMENT,
+    `provider` VARCHAR(20) NOT NULL,
+    `period` ENUM('daily', 'weekly', 'monthly') DEFAULT 'monthly',
+    `token_limit` INT(11) DEFAULT 1000000,
+    `tokens_used` INT(11) DEFAULT 0,
+    `request_limit` INT(11) DEFAULT 1000,
+    `requests_used` INT(11) DEFAULT 0,
+    `cost_limit` DECIMAL(10,2) DEFAULT 100.00,
+    `cost_used` DECIMAL(10,6) DEFAULT 0.000000,
+    `period_start` DATE NOT NULL,
+    `period_end` DATE NOT NULL,
+    `is_unlimited` TINYINT(1) DEFAULT 0,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `idx_provider_period` (`provider`, `period_start`)
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+-- FEATURE 6: Revision History
+CREATE TABLE IF NOT EXISTS {prefix}_catman_revisions (
+    `id` INT(11) NOT NULL AUTO_INCREMENT,
+    `draft_id` INT(11) NOT NULL,
+    `revision_type` ENUM('rewrite', 'improve', 'summarize', 'expand', 'translate') NOT NULL,
+    `original_content` LONGTEXT NULL,
+    `revised_content` LONGTEXT NULL,
+    `model` VARCHAR(50) NULL,
+    `tokens_used` INT(11) DEFAULT 0,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_draft` (`draft_id`)
+) ENGINE=InnoDB DEFAULT CHARSET={charset};
+
+-- Default Settings
+INSERT IGNORE INTO {prefix}_catman_settings (`name`, `value`) VALUES 
+('default_model', 'gpt-4o'),
+('news_word_limit', '500'), 
+('news_tag_count', '10'),
+('default_language', 'tr'),
+('image_enabled', '1'),
+('image_provider', 'openai'),
+('image_size', '1024x1024'),
+('auto_approve', '0'),
+('batch_delay', '3'),
+('prompt_meta_title', 'Aşağıdaki kategori için SEO uyumlu bir meta başlığı oluştur: {cat_name}'),
+('prompt_meta_descr', 'Aşağıdaki kategori için etkileyici bir meta açıklaması yaz: {cat_name}'),
+('prompt_keywords', 'Aşağıdaki kategori için virgülle ayrılmış 10 adet anahtar kelime oluştur: {cat_name}'),
+('prompt_description', 'Aşağıdaki kategori için kapsamlı bir HTML açıklama yazısı oluştur: {cat_name}. Lütfen HTML etiketlerini kullan.'),
+('prompt_news_generation', 'Konu: {title}. Bana şu anahtarlara sahip saf bir JSON objesi dön: short_story (özet), full_story (makale, H2-H3 başlıkları ile), meta_title (SEO başlık), meta_descr (SEO açıklama max 160 karakter), keywords (SEO anahtar kelimeleri, virgülle ayrılmış), tags (Konu etiketleri, virgülle ayrılmış {tag_count} adet), alt_name (URL slug. SADECE konunun ana adını ve varsa yılını kullan. Açıklayıcı, tanımlayıcı veya eylem belirten kelimeler EKLEME. Max 3-5 kelime. Örn: "avatar-2026", "iphone-15-pro", "dunya-kupasi-2026"). Makale en az {word_limit} kelime olsun. Dili {language} olsun.'),
+('prompt_image', 'Create a professional featured image for: {title}. Style: modern, high quality, no text overlay.'),
+('prompt_rewrite', 'Aşağıdaki içeriği aynı anlamı koruyarak daha ilgi çekici hale getir: {content}'),
+('prompt_improve', 'Aşağıdaki içeriği daha iyi okunabilirlik ve SEO açısından geliştir: {content}'),
+('prompt_summarize', 'Aşağıdaki içeriği kısa ve öz şekilde özetle: {content}'),
+('prompt_expand', 'Aşağıdaki içeriği daha fazla detay ve örneklerle genişlet: {content}'),
+('prompt_translate', 'Aşağıdaki içeriği {target_language} diline çevir: {content}');
+
+-- Default Template
+INSERT IGNORE INTO {prefix}_catman_templates (`id`, `name`, `description`, `is_default`) VALUES 
+(1, 'Varsayılan Şablon', 'Tüm kategoriler için varsayılan içerik şablonu', 1);
+
+-- Initialize Quota
+INSERT IGNORE INTO {prefix}_catman_quota (`provider`, `period`, `period_start`, `period_end`) VALUES 
+('openai', 'monthly', CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 MONTH)),
+('gemini', 'monthly', CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 MONTH)),
+('claude', 'monthly', CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 MONTH)),
+('qwen', 'monthly', CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 MONTH));
+
+-- Admin Section
+INSERT IGNORE INTO {prefix}_admin_sections (`name`, `title`, `descr`, `icon`, `allow_groups`) VALUES 
+('catman', 'DLE AI Studio', 'Yapay Zeka İçerik Motoru', '', '1');]]></mysqlinstall>
+	<mysqluninstall><![CDATA[DROP TABLE IF EXISTS {prefix}_catman_settings;
+DROP TABLE IF EXISTS {prefix}_catman_logs;
+DROP TABLE IF EXISTS {prefix}_catman_drafts;
+DROP TABLE IF EXISTS {prefix}_catman_templates;
+DROP TABLE IF EXISTS {prefix}_catman_schedules;
+DROP TABLE IF EXISTS {prefix}_catman_queue;
+DROP TABLE IF EXISTS {prefix}_catman_images;
+DROP TABLE IF EXISTS {prefix}_catman_quota;
+DROP TABLE IF EXISTS {prefix}_catman_revisions;
+DELETE FROM {prefix}_admin_sections WHERE name='catman';]]></mysqluninstall>
+	<mysqlenable><![CDATA[INSERT IGNORE INTO {prefix}_admin_sections (`name`, `title`, `descr`, `icon`, `allow_groups`) VALUES ('catman', 'DLE AI Studio', 'Yapay Zeka İçerik Motoru', '', '1');]]></mysqlenable>
+	<mysqldisable><![CDATA[DELETE FROM {prefix}_admin_sections WHERE name='catman';]]></mysqldisable>
+	<file name="engine/inc/catman.php">
+		<operation action="create">
+			<searchcode><![CDATA[]]></searchcode>
+			<replacecode><![CDATA[<?php
+
+if (!defined('DATALIFEENGINE') OR (!defined('LOGGED_IN') AND !defined('CATMAN_CRON'))) {
+    die("Hacking attempt!");
+}
+
+if (!defined('CATMAN_CRON') && $member_id['user_group'] != 1) {
+    msg("error", "Error!", "Bu alana erişim yetkiniz yok.");
+}
+
+// ============================================================================
+// CLASS: CatManAI - Enhanced Version 2.0
+// ============================================================================
+class CatManAI
+{
+    private $db;
+    private $api_key;
+    private $model;
+    private $provider;
+    private $encryption_key;
+    private $settings = [];
+    
+    // Supported languages for multilingual content
+    private $supported_languages = [
+        'tr' => 'Türkçe',
+        'en' => 'English',
+        'de' => 'Deutsch',
+        'fr' => 'Français',
+        'es' => 'Español',
+        'ru' => 'Русский',
+        'ar' => 'العربية',
+        'zh' => '中文',
+        'ja' => '日本語',
+        'ko' => '한국어'
+    ];
+
+    public function __construct()
+    {
+        global $db, $config;
+        $this->db = $db;
+        $this->encryption_key = defined('SECURE_AUTH_KEY') ? substr(hash('sha256', SECURE_AUTH_KEY), 0, 32) : substr(hash('sha256', $config['http_home_url']), 0, 32);
+        $this->loadSettings();
+        $this->checkDbUpdates();
+    }
+
+    public function checkDbUpdates() {
+        if (!isset($this->settings['db_version']) || version_compare($this->settings['db_version'], '2.0', '<')) {
+            // Upgrade Logs Table
+            $chk = $this->db->super_query("SHOW COLUMNS FROM " . PREFIX . "_catman_logs LIKE 'language'");
+            if (!$chk) {
+                $this->db->query("ALTER TABLE " . PREFIX . "_catman_logs ADD COLUMN language VARCHAR(10) DEFAULT 'tr', ADD COLUMN content_type VARCHAR(20) DEFAULT 'category'");
+            }
+            
+            // Upgrade Drafts Table
+            $chk2 = $this->db->super_query("SHOW COLUMNS FROM " . PREFIX . "_catman_drafts LIKE 'language'");
+            if (!$chk2) {
+                $this->db->query("ALTER TABLE " . PREFIX . "_catman_drafts 
+                    ADD COLUMN language VARCHAR(10) DEFAULT 'tr',
+                    ADD COLUMN image_url VARCHAR(500) NULL,
+                    ADD COLUMN template_id INT(11) NULL,
+                    ADD COLUMN short_story LONGTEXT NULL,
+                    ADD COLUMN full_story LONGTEXT NULL,
+                    ADD COLUMN tags TEXT NULL,
+                    ADD COLUMN alt_name VARCHAR(100) NULL
+                ");
+            }
+
+            // Create Missing Tables (v2.0 Features)
+            $this->db->query("CREATE TABLE IF NOT EXISTS " . PREFIX . "_catman_templates (
+                `id` INT(11) NOT NULL AUTO_INCREMENT,
+                `name` VARCHAR(100) NOT NULL,
+                `description` TEXT NULL,
+                `category_ids` TEXT NULL,
+                `prompt_meta_title` TEXT NULL,
+                `prompt_meta_descr` TEXT NULL,
+                `prompt_keywords` TEXT NULL,
+                `prompt_description` TEXT NULL,
+                `prompt_news` TEXT NULL,
+                `prompt_image` TEXT NULL,
+                `word_limit` INT(11) DEFAULT 500,
+                `tag_count` INT(11) DEFAULT 10,
+                `is_default` TINYINT(1) DEFAULT 0,
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+            $this->db->query("CREATE TABLE IF NOT EXISTS " . PREFIX . "_catman_schedules (
+                `id` INT(11) NOT NULL AUTO_INCREMENT,
+                `name` VARCHAR(100) NOT NULL,
+                `task_type` ENUM('category', 'news', 'batch') NOT NULL,
+                `category_ids` TEXT NULL,
+                `schedule_type` ENUM('once', 'hourly', 'daily', 'weekly', 'monthly') NOT NULL,
+                `schedule_time` TIME DEFAULT '00:00:00',
+                `schedule_day` INT(11) DEFAULT 0,
+                `template_id` INT(11) DEFAULT NULL,
+                `language` VARCHAR(10) DEFAULT 'tr',
+                `generate_image` TINYINT(1) DEFAULT 0,
+                `auto_approve` TINYINT(1) DEFAULT 0,
+                `is_active` TINYINT(1) DEFAULT 1,
+                `last_run` DATETIME NULL,
+                `next_run` DATETIME NULL,
+                `run_count` INT(11) DEFAULT 0,
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_next_run` (`next_run`),
+                KEY `idx_active` (`is_active`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+            $this->db->query("CREATE TABLE IF NOT EXISTS " . PREFIX . "_catman_queue (
+                `id` INT(11) NOT NULL AUTO_INCREMENT,
+                `batch_id` VARCHAR(50) NOT NULL,
+                `item_type` ENUM('category', 'news') NOT NULL,
+                `item_id` INT(11) NOT NULL,
+                `item_title` VARCHAR(255) NULL,
+                `template_id` INT(11) DEFAULT NULL,
+                `language` VARCHAR(10) DEFAULT 'tr',
+                `generate_image` TINYINT(1) DEFAULT 0,
+                `status` ENUM('pending', 'processing', 'completed', 'failed') NOT NULL DEFAULT 'pending',
+                `error_message` TEXT NULL,
+                `result_draft_id` INT(11) NULL,
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `started_at` DATETIME NULL,
+                `completed_at` DATETIME NULL,
+                PRIMARY KEY (`id`),
+                KEY `idx_batch` (`batch_id`),
+                KEY `idx_status` (`status`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+            $this->db->query("CREATE TABLE IF NOT EXISTS " . PREFIX . "_catman_images (
+                `id` INT(11) NOT NULL AUTO_INCREMENT,
+                `draft_id` INT(11) NULL,
+                `prompt` TEXT NOT NULL,
+                `image_url` VARCHAR(500) NULL,
+                `local_path` VARCHAR(500) NULL,
+                `provider` VARCHAR(20) DEFAULT 'openai',
+                `size` VARCHAR(20) DEFAULT '1024x1024',
+                `tokens_used` INT(11) DEFAULT 0,
+                `cost` DECIMAL(10,6) DEFAULT 0.000000,
+                `status` ENUM('pending', 'completed', 'failed') NOT NULL DEFAULT 'pending',
+                `error_message` TEXT NULL,
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_draft` (`draft_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+            $this->db->query("CREATE TABLE IF NOT EXISTS " . PREFIX . "_catman_quota (
+                `id` INT(11) NOT NULL AUTO_INCREMENT,
+                `provider` VARCHAR(20) NOT NULL,
+                `period` ENUM('daily', 'weekly', 'monthly') DEFAULT 'monthly',
+                `token_limit` INT(11) DEFAULT 1000000,
+                `tokens_used` INT(11) DEFAULT 0,
+                `request_limit` INT(11) DEFAULT 1000,
+                `requests_used` INT(11) DEFAULT 0,
+                `cost_limit` DECIMAL(10,2) DEFAULT 100.00,
+                `cost_used` DECIMAL(10,6) DEFAULT 0.000000,
+                `period_start` DATE NOT NULL,
+                `period_end` DATE NOT NULL,
+                `is_unlimited` TINYINT(1) DEFAULT 0,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `idx_provider_period` (`provider`, `period_start`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+            $this->db->query("CREATE TABLE IF NOT EXISTS " . PREFIX . "_catman_revisions (
+                `id` INT(11) NOT NULL AUTO_INCREMENT,
+                `draft_id` INT(11) NOT NULL,
+                `revision_type` ENUM('rewrite', 'improve', 'summarize', 'expand', 'translate') NOT NULL,
+                `original_content` LONGTEXT NULL,
+                `revised_content` LONGTEXT NULL,
+                `model` VARCHAR(50) NULL,
+                `tokens_used` INT(11) DEFAULT 0,
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_draft` (`draft_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            
+            // Insert Default Template
+            $this->db->query("INSERT IGNORE INTO " . PREFIX . "_catman_templates (`id`, `name`, `description`, `is_default`) VALUES (1, 'Varsayılan Şablon', 'Tüm kategoriler için varsayılan içerik şablonu', 1)");
+
+            // Save new version
+            $this->db->query("INSERT INTO " . PREFIX . "_catman_settings (name, value) VALUES ('db_version', '2.0') ON DUPLICATE KEY UPDATE value='2.0'");
+            $this->settings['db_version'] = '2.0';
+        }
+    }
+
+    private function loadSettings()
+    {
+        $rows = $this->db->query("SELECT * FROM " . PREFIX . "_catman_settings");
+        while ($row = $this->db->get_row($rows)) {
+            $this->settings[$row['name']] = $row['value'];
+        }
+
+        $this->provider = isset($this->settings['ai_provider']) ? $this->settings['ai_provider'] : 'openai';
+        
+        $default_models = [
+            'openai' => 'gpt-4o',
+            'gemini' => 'gemini-2.5-flash',
+            'qwen'   => 'qwen-turbo',
+            'claude' => 'claude-haiku-4-5-20251001'
+        ];
+        
+        $this->model = isset($this->settings['default_model']) ? $this->settings['default_model'] : $default_models[$this->provider];
+
+        $key_map = [
+            'openai' => 'openai_api_key',
+            'gemini' => 'gemini_api_key',
+            'qwen' => 'qwen_api_key',
+            'claude' => 'claude_api_key'
+        ];
+
+        $key_name = isset($key_map[$this->provider]) ? $key_map[$this->provider] : 'openai_api_key';
+        
+        if (isset($this->settings[$key_name]) && !empty($this->settings[$key_name])) {
+            $this->api_key = $this->decrypt($this->settings[$key_name]);
+        }
+    }
+
+    // ========================================================================
+    // ENCRYPTION UTILITIES
+    // ========================================================================
+    public function encrypt($data)
+    {
+        $iv = openssl_random_pseudo_bytes(openssl_cipher_iv_length('aes-256-cbc'));
+        $encrypted = openssl_encrypt($data, 'aes-256-cbc', $this->encryption_key, 0, $iv);
+        $payload = ['iv' => base64_encode($iv), 'value' => base64_encode($encrypted)];
+        return base64_encode(json_encode($payload));
+    }
+
+    public function decrypt($data)
+    {
+        $json_str = base64_decode($data);
+        if (!$json_str) return '';
+        $payload = json_decode($json_str, true);
+        if (!is_array($payload) || !isset($payload['iv']) || !isset($payload['value'])) return ''; 
+        $iv = base64_decode($payload['iv']);
+        $encrypted = base64_decode($payload['value']);
+        return openssl_decrypt($encrypted, 'aes-256-cbc', $this->encryption_key, 0, $iv);
+    }
+
+    // ========================================================================
+    // API KEY MANAGEMENT
+    // ========================================================================
+    public function saveApiKey($key, $provider = 'openai')
+    {
+        $key = trim($key);
+        $encrypted = $this->db->safesql($this->encrypt($key));
+        $key_map = ['openai' => 'openai_api_key', 'gemini' => 'gemini_api_key', 'qwen' => 'qwen_api_key', 'claude' => 'claude_api_key'];
+        $key_name = isset($key_map[$provider]) ? $key_map[$provider] : 'openai_api_key';
+        $this->db->query("INSERT INTO " . PREFIX . "_catman_settings (`name`, `value`) VALUES ('$key_name', '$encrypted') ON DUPLICATE KEY UPDATE `value`='$encrypted'");
+        $this->api_key = $key;
+    }
+
+    public function maskApiKey($provider)
+    {
+        $key_map = ['openai' => 'openai_api_key', 'gemini' => 'gemini_api_key', 'qwen' => 'qwen_api_key', 'claude' => 'claude_api_key'];
+        $key_name = isset($key_map[$provider]) ? $key_map[$provider] : 'openai_api_key';
+        
+        if (empty($this->settings[$key_name])) return '';
+        
+        $decrypted = $this->decrypt($this->settings[$key_name]);
+        if (empty($decrypted) || strlen($decrypted) < 8) return '***';
+        
+        $last4 = substr($decrypted, -4);
+        $prefix = substr($decrypted, 0, 3);
+        return $prefix . '...****' . $last4;
+    }
+
+    // ========================================================================
+    // LOGGING & QUOTA MANAGEMENT
+    // ========================================================================
+    public function logUsage($cat_id, $tokens, $model, $status, $error_msg = null, $cost = 0, $content_type = 'category', $language = 'tr')
+    {
+        $cat_id = intval($cat_id);
+        $tokens = intval($tokens);
+        $model = $this->db->safesql($model);
+        $status = $this->db->safesql($status);
+        $error_msg = $error_msg ? "'" . $this->db->safesql($error_msg) . "'" : "NULL";
+        $cost = floatval($cost);
+        $content_type = $this->db->safesql($content_type);
+        $language = $this->db->safesql($language);
+        
+        $this->db->query("INSERT INTO " . PREFIX . "_catman_logs (`category_id`, `tokens_used`, `model`, `status`, `error_message`, `cost_estimated`, `content_type`, `language`) VALUES ('$cat_id', '$tokens', '$model', '$status', $error_msg, '$cost', '$content_type', '$language')");
+        
+        // Update quota
+        $this->updateQuota($tokens, $cost);
+    }
+
+    private function updateQuota($tokens, $cost)
+    {
+        $provider = $this->db->safesql($this->provider);
+        $today = date('Y-m-d');
+        
+        // Check if quota record exists for current period
+        $quota = $this->db->super_query("SELECT * FROM " . PREFIX . "_catman_quota WHERE provider='$provider' AND period_start <= '$today' AND period_end >= '$today'");
+        
+        if ($quota) {
+            $this->db->query("UPDATE " . PREFIX . "_catman_quota SET tokens_used = tokens_used + $tokens, requests_used = requests_used + 1, cost_used = cost_used + $cost WHERE id = '{$quota['id']}'");
+        } else {
+            // Create new quota period
+            $period_end = date('Y-m-d', strtotime('+1 month'));
+            $this->db->query("INSERT INTO " . PREFIX . "_catman_quota (provider, period_start, period_end, tokens_used, requests_used, cost_used) VALUES ('$provider', '$today', '$period_end', $tokens, 1, $cost)");
+        }
+    }
+
+    public function checkQuota()
+    {
+        $provider = $this->db->safesql($this->provider);
+        $today = date('Y-m-d');
+        
+        $quota = $this->db->super_query("SELECT * FROM " . PREFIX . "_catman_quota WHERE provider='$provider' AND period_start <= '$today' AND period_end >= '$today'");
+        
+        if (!$quota) return ['allowed' => true];
+        
+        if ($quota['is_unlimited']) return ['allowed' => true];
+        
+        $warnings = [];
+        $allowed = true;
+        
+        if ($quota['token_limit'] > 0 && $quota['tokens_used'] >= $quota['token_limit']) {
+            $allowed = false;
+            $warnings[] = "Token limiti aşıldı ({$quota['tokens_used']}/{$quota['token_limit']})";
+        }
+        
+        if ($quota['request_limit'] > 0 && $quota['requests_used'] >= $quota['request_limit']) {
+            $allowed = false;
+            $warnings[] = "İstek limiti aşıldı ({$quota['requests_used']}/{$quota['request_limit']})";
+        }
+        
+        if ($quota['cost_limit'] > 0 && $quota['cost_used'] >= $quota['cost_limit']) {
+            $allowed = false;
+            $warnings[] = "Maliyet limiti aşıldı (\${$quota['cost_used']}/\${$quota['cost_limit']})";
+        }
+        
+        return ['allowed' => $allowed, 'warnings' => $warnings, 'quota' => $quota];
+    }
+
+    // ========================================================================
+    // AI API CALLS
+    // ========================================================================
+    public function generateAllSEO($cat_name, $instruction_map, $language = 'tr')
+    {
+        if (empty($this->api_key) || strpos($this->api_key, '*') !== false) {
+             return ['success' => false, 'error' => 'API Key Configured Incorrectly or Missing'];
+        }
+
+        // Check quota
+        $quotaCheck = $this->checkQuota();
+        if (!$quotaCheck['allowed']) {
+            return ['success' => false, 'error' => implode(', ', $quotaCheck['warnings'])];
+        }
+
+        switch($this->provider) {
+            case 'gemini': return $this->callGemini($cat_name, $instruction_map, $language);
+            case 'qwen': return $this->callQwen($cat_name, $instruction_map, $language);
+            case 'claude': return $this->callClaude($cat_name, $instruction_map, $language);
+            case 'openai': default: return $this->callOpenAI($cat_name, $instruction_map, $language);
+        }
+    }
+
+    private function callOpenAI($cat_name, $instruction_map, $language = 'tr')
+    {
+        $lang_name = isset($this->supported_languages[$language]) ? $this->supported_languages[$language] : 'Turkish';
+        $system_prompt = "You are an SEO expert for DLE. Output ONLY a valid JSON object with keys: 'meta_title', 'meta_descr', 'keywords', 'description', 'short_story', 'full_story', 'tags', 'alt_name'. Language: $lang_name. CRITICAL: Return ONLY raw JSON, NO markdown code blocks, NO backticks, NO explanations.";
+        $user_prompt = "Context: $cat_name\n\nInstructions:\n" . implode("\n", $instruction_map) . "\n\nReturn ONLY the JSON object, starting with { and ending with }. No other text.";
+
+        $url = 'https://api.openai.com/v1/chat/completions';
+        $data = [
+            'model' => $this->model,
+            'messages' => [['role' => 'system', 'content' => $system_prompt], ['role' => 'user', 'content' => $user_prompt]],
+            'temperature' => 0.7
+        ];
+        if (strpos($this->model, 'gpt-4') !== false || strpos($this->model, '1106') !== false) $data['response_format'] = ['type' => 'json_object'];
+
+        return $this->execCurl($url, $data, ['Authorization: Bearer ' . $this->api_key]);
+    }
+
+    private function callGemini($cat_name, $instruction_map, $language = 'tr')
+    {
+        $lang_name = isset($this->supported_languages[$language]) ? $this->supported_languages[$language] : 'Turkish';
+        $prompt = "You are an SEO expert. Language: $lang_name. Context: $cat_name\n\nInstructions:\n" . implode("\n", $instruction_map) . "\n\nCRITICAL: Return ONLY raw JSON object. NO markdown code blocks, NO backticks, NO explanations. Just the JSON object.";
+        $url = 'https://generativelanguage.googleapis.com/v1beta/models/' . $this->model . ':generateContent';
+        $data = [
+            'contents' => [['parts' => [['text' => $prompt]]]],
+            'generationConfig' => ['temperature' => 0.7, 'maxOutputTokens' => 8192, 'response_mime_type' => 'application/json']
+        ];
+        return $this->execCurl($url, $data, ['x-goog-api-key: ' . $this->api_key], 'gemini');
+    }
+
+    private function callQwen($cat_name, $instruction_map, $language = 'tr')
+    {
+        $lang_name = isset($this->supported_languages[$language]) ? $this->supported_languages[$language] : 'Turkish';
+        $prompt = "You are an SEO expert. Language: $lang_name. Context: $cat_name\n\nInstructions:\n" . implode("\n", $instruction_map) . "\n\nCRITICAL: Return ONLY raw JSON starting with { and ending with }. NO markdown, NO code blocks, NO extra text.";
+        $url = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation';
+        $data = ['model' => $this->model, 'input' => ['prompt' => $prompt], 'parameters' => ['result_format' => 'message', 'max_tokens' => 4096]];
+        return $this->execCurl($url, $data, ['Authorization: Bearer ' . $this->api_key], 'qwen');
+    }
+
+    private function callClaude($cat_name, $instruction_map, $language = 'tr')
+    {
+        $lang_name = isset($this->supported_languages[$language]) ? $this->supported_languages[$language] : 'Turkish';
+        $prompt = "You are an SEO expert. Language: $lang_name. Context: $cat_name\n\nInstructions:\n" . implode("\n", $instruction_map) . "\n\nCRITICAL: Return ONLY raw JSON starting with { and ending with }. NO markdown, NO code blocks, NO extra text.";
+        $url = 'https://api.anthropic.com/v1/messages';
+        $data = ['model' => $this->model, 'max_tokens' => 4096, 'messages' => [['role' => 'user', 'content' => $prompt]]];
+        return $this->execCurl($url, $data, ['x-api-key: ' . $this->api_key, 'anthropic-version: 2023-06-01'], 'claude');
+    }
+
+    private function execCurl($url, $data, $headers = [], $provider = 'openai') {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10); 
+        curl_setopt($ch, CURLOPT_TIMEOUT, 90);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+        $default_headers = ['Content-Type: application/json'];
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array_merge($default_headers, $headers));
+        
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        
+        if (curl_errno($ch)) { $err = curl_error($ch); curl_close($ch); return ['success' => false, 'error' => "CURL: $err"]; }
+        curl_close($ch);
+        
+        $result = json_decode($response, true);
+        if ($http_code !== 200) {
+            $msg = "HTTP $http_code";
+            if ($provider == 'openai') $msg = $result['error']['message'] ?? $msg;
+            if ($provider == 'gemini') $msg = $result['error']['message'] ?? $msg;
+            if ($provider == 'qwen') $msg = $result['message'] ?? $msg;
+            if ($provider == 'claude') $msg = $result['error']['message'] ?? $msg;
+            return ['success' => false, 'error' => $msg];
+        }
+
+        $content = '';
+        $tokens = 0;
+        
+        if ($provider == 'openai') {
+            $content = $result['choices'][0]['message']['content'];
+            $tokens = $result['usage']['total_tokens'];
+        } elseif ($provider == 'gemini') {
+            $content = $result['candidates'][0]['content']['parts'][0]['text'];
+            $tokens = $result['usageMetadata']['totalTokenCount'] ?? 0;
+        } elseif ($provider == 'qwen') {
+            $content = $result['output']['choices'][0]['message']['content'];
+            $tokens = $result['usage']['total_tokens'] ?? 0;
+        } elseif ($provider == 'claude') {
+            $content = $result['content'][0]['text'];
+            $tokens = ($result['usage']['input_tokens'] ?? 0) + ($result['usage']['output_tokens'] ?? 0);
+        }
+
+        return ['success' => true, 'content' => $content, 'tokens' => $tokens, 'cost' => 0];
+    }
+
+    // ========================================================================
+    // IMAGE GENERATION (Feature 3)
+    // ========================================================================
+    public function generateImage($title, $draft_id = null, $custom_prompt = null)
+    {
+        if ($this->provider !== 'openai') {
+            return ['success' => false, 'error' => 'Görsel üretimi sadece OpenAI (DALL-E) ile desteklenmektedir.'];
+        }
+
+        $quotaCheck = $this->checkQuota();
+        if (!$quotaCheck['allowed']) {
+            return ['success' => false, 'error' => implode(', ', $quotaCheck['warnings'])];
+        }
+
+        $prompt_template = $custom_prompt ?: (isset($this->settings['prompt_image']) ? $this->settings['prompt_image'] : 'Create a professional featured image for: {title}');
+        $prompt = str_replace('{title}', $title, $prompt_template);
+        
+        $size = isset($this->settings['image_size']) ? $this->settings['image_size'] : '1024x1024';
+
+        $url = 'https://api.openai.com/v1/images/generations';
+        $data = [
+            'model' => 'dall-e-3',
+            'prompt' => $prompt,
+            'n' => 1,
+            'size' => $size,
+            'quality' => 'standard',
+            'response_format' => 'url'
+        ];
+
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 120);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json', 'Authorization: Bearer ' . $this->api_key]);
+
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        
+        if (curl_errno($ch)) {
+            $err = curl_error($ch);
+            curl_close($ch);
+            return ['success' => false, 'error' => "CURL Error: $err"];
+        }
+        curl_close($ch);
+
+        $result = json_decode($response, true);
+        
+        if ($http_code !== 200) {
+            $msg = $result['error']['message'] ?? "HTTP $http_code";
+            return ['success' => false, 'error' => $msg];
+        }
+
+        $image_url = $result['data'][0]['url'] ?? null;
+        if (!$image_url) {
+            return ['success' => false, 'error' => 'Görsel URL alınamadı'];
+        }
+
+        // Log image generation
+        $draft_id_sql = $draft_id ? intval($draft_id) : 'NULL';
+        $prompt_sql = $this->db->safesql($prompt);
+        $image_url_sql = $this->db->safesql($image_url);
+        
+        $this->db->query("INSERT INTO " . PREFIX . "_catman_images (draft_id, prompt, image_url, provider, size, status) VALUES ($draft_id_sql, '$prompt_sql', '$image_url_sql', 'openai', '$size', 'completed')");
+
+        // Update quota for image (estimated cost ~$0.04 for DALL-E 3 standard)
+        $this->updateQuota(0, 0.04);
+
+        return ['success' => true, 'image_url' => $image_url, 'cost' => 0.04];
+    }
+
+    // ========================================================================
+    // CONTENT GENERATION
+    // ========================================================================
+    public function generateNews($title, $language = 'tr', $template_id = null)
+    {
+        // Load template if specified
+        $template = null;
+        if ($template_id) {
+            $template_id = intval($template_id);
+            $template = $this->db->super_query("SELECT * FROM " . PREFIX . "_catman_templates WHERE id='$template_id'");
+        }
+
+        $prompt_tpl = ($template && !empty($template['prompt_news'])) ? $template['prompt_news'] : 
+            (isset($this->settings['prompt_news_generation']) ? $this->settings['prompt_news_generation'] : 
+            'Konu: {title}. JSON dön: short_story, full_story, meta_title, meta_descr, keywords, tags, alt_name (URL slug, SADECE konunun ana adını ve varsa yılını kullan, max 3-5 kelime).');
+        
+        $word_limit = ($template && $template['word_limit']) ? $template['word_limit'] : 
+            (isset($this->settings['news_word_limit']) ? $this->settings['news_word_limit'] : '500');
+        
+        $tag_count = ($template && $template['tag_count']) ? $template['tag_count'] : 
+            (isset($this->settings['news_tag_count']) ? $this->settings['news_tag_count'] : '10');
+
+        $lang_name = isset($this->supported_languages[$language]) ? $this->supported_languages[$language] : 'Turkish';
+
+        $prompt = str_replace(
+            ['{title}', '{word_limit}', '{tag_count}', '{language}'],
+            [$title, $word_limit, $tag_count, $lang_name],
+            $prompt_tpl
+        );
+
+        $instructions = ['news_request' => $prompt];
+        return $this->generateAllSEO($title, $instructions, $language);
+    }
+
+    // ========================================================================
+    // CONTENT REVISION (Feature 5)
+    // ========================================================================
+    public function reviseContent($content, $type, $draft_id = null, $target_language = null)
+    {
+        $prompt_map = [
+            'rewrite'   => $this->settings['prompt_rewrite']   ?? 'Aşağıdaki içeriği yeniden yaz: {content}',
+            'improve'   => $this->settings['prompt_improve']   ?? 'Aşağıdaki içeriği geliştir: {content}',
+            'summarize' => $this->settings['prompt_summarize'] ?? 'Aşağıdaki içeriği özetle: {content}',
+            'expand'    => $this->settings['prompt_expand']    ?? 'Aşağıdaki içeriği genişlet: {content}',
+            'translate' => $this->settings['prompt_translate'] ?? 'Aşağıdaki içeriği {target_language} diline çevir: {content}'
+        ];
+
+        $prompt_template = $prompt_map[$type] ?? $prompt_map['improve'];
+        $prompt = str_replace(
+            ['{content}', '{target_language}'],
+            [$content, $target_language ? $this->supported_languages[$target_language] ?? $target_language : ''],
+            $prompt_template
+        );
+
+        $result = $this->generateAllSEO('Content Revision', ['revision' => $prompt]);
+
+        if ($result['success'] && $draft_id) {
+            // Save revision history
+            $draft_id = intval($draft_id);
+            $type_sql = $this->db->safesql($type);
+            $original_sql = $this->db->safesql($content);
+            $revised_sql = $this->db->safesql($result['content']);
+            $model_sql = $this->db->safesql($this->model);
+            
+            $this->db->query("INSERT INTO " . PREFIX . "_catman_revisions (draft_id, revision_type, original_content, revised_content, model, tokens_used) VALUES ($draft_id, '$type_sql', '$original_sql', '$revised_sql', '$model_sql', {$result['tokens']})");
+        }
+
+        return $result;
+    }
+
+    // ========================================================================
+    // BATCH PROCESSING (Feature 1)
+    // ========================================================================
+    public function createBatch($items, $language = 'tr', $template_id = null, $generate_image = false)
+    {
+        $batch_id = uniqid('batch_');
+        
+        foreach ($items as $item) {
+            $item_type = $this->db->safesql($item['type']);
+            $item_id = intval($item['id']);
+            $item_title = $this->db->safesql($item['title']);
+            $template_sql = $template_id ? intval($template_id) : 'NULL';
+            $lang_sql = $this->db->safesql($language);
+            $gen_img = $generate_image ? 1 : 0;
+            
+            $this->db->query("INSERT INTO " . PREFIX . "_catman_queue (batch_id, item_type, item_id, item_title, template_id, language, generate_image) VALUES ('$batch_id', '$item_type', $item_id, '$item_title', $template_sql, '$lang_sql', $gen_img)");
+        }
+        
+        return $batch_id;
+    }
+
+    public function processNextQueueItem($batch_id)
+    {
+        $batch_id = $this->db->safesql($batch_id);
+        
+        // Get next pending item
+        $item = $this->db->super_query("SELECT * FROM " . PREFIX . "_catman_queue WHERE batch_id='$batch_id' AND status='pending' ORDER BY id ASC LIMIT 1");
+        
+        if (!$item) {
+            return ['success' => false, 'error' => 'No pending items', 'completed' => true];
+        }
+
+        // Mark as processing
+        $this->db->query("UPDATE " . PREFIX . "_catman_queue SET status='processing', started_at=NOW() WHERE id='{$item['id']}'");
+
+        try {
+            if ($item['item_type'] === 'category') {
+                $result = $this->generateCategoryContent($item['item_id'], $item['language'], $item['template_id']);
+            } else {
+                $result = $this->generateNews($item['item_title'], $item['language'], $item['template_id']);
+            }
+
+            if ($result['success']) {
+                $draft_id = $this->saveDraft($item['item_id'], $result['data'], $item['language'], $item['template_id']);
+                
+                // Generate image if requested
+                $image_url = null;
+                if ($item['generate_image']) {
+                    $img_result = $this->generateImage($item['item_title'], $draft_id);
+                    if ($img_result['success']) {
+                        $image_url = $img_result['image_url'];
+                        $this->db->query("UPDATE " . PREFIX . "_catman_drafts SET image_url='{$img_result['image_url']}' WHERE id=$draft_id");
+                    }
+                }
+
+                $this->db->query("UPDATE " . PREFIX . "_catman_queue SET status='completed', completed_at=NOW(), result_draft_id=$draft_id WHERE id='{$item['id']}'");
+                
+                return ['success' => true, 'item_id' => $item['id'], 'draft_id' => $draft_id, 'image_url' => $image_url];
+            } else {
+                $error = $this->db->safesql($result['error']);
+                $this->db->query("UPDATE " . PREFIX . "_catman_queue SET status='failed', error_message='$error', completed_at=NOW() WHERE id='{$item['id']}'");
+                return ['success' => false, 'error' => $result['error'], 'item_id' => $item['id']];
+            }
+        } catch (Exception $e) {
+            $error = $this->db->safesql($e->getMessage());
+            $this->db->query("UPDATE " . PREFIX . "_catman_queue SET status='failed', error_message='$error', completed_at=NOW() WHERE id='{$item['id']}'");
+            return ['success' => false, 'error' => $e->getMessage(), 'item_id' => $item['id']];
+        }
+    }
+
+    public function getBatchStatus($batch_id)
+    {
+        $batch_id = $this->db->safesql($batch_id);
+        
+        $total = $this->db->super_query("SELECT COUNT(*) as count FROM " . PREFIX . "_catman_queue WHERE batch_id='$batch_id'");
+        $completed = $this->db->super_query("SELECT COUNT(*) as count FROM " . PREFIX . "_catman_queue WHERE batch_id='$batch_id' AND status='completed'");
+        $failed = $this->db->super_query("SELECT COUNT(*) as count FROM " . PREFIX . "_catman_queue WHERE batch_id='$batch_id' AND status='failed'");
+        $pending = $this->db->super_query("SELECT COUNT(*) as count FROM " . PREFIX . "_catman_queue WHERE batch_id='$batch_id' AND status='pending'");
+        $processing = $this->db->super_query("SELECT COUNT(*) as count FROM " . PREFIX . "_catman_queue WHERE batch_id='$batch_id' AND status='processing'");
+
+        return [
+            'total' => $total['count'],
+            'completed' => $completed['count'],
+            'failed' => $failed['count'],
+            'pending' => $pending['count'],
+            'processing' => $processing['count'],
+            'percentage' => $total['count'] > 0 ? round(($completed['count'] + $failed['count']) / $total['count'] * 100, 1) : 0
+        ];
+    }
+
+    private function generateCategoryContent($cat_id, $language = 'tr', $template_id = null)
+    {
+        $cat_id = intval($cat_id);
+        $cat_info = $this->db->super_query("SELECT * FROM " . PREFIX . "_category WHERE id='$cat_id'");
+        
+        if (!$cat_info) {
+            return ['success' => false, 'error' => 'Category Not Found'];
+        }
+
+        $template = null;
+        if ($template_id) {
+            $template = $this->db->super_query("SELECT * FROM " . PREFIX . "_catman_templates WHERE id=" . intval($template_id));
+        }
+
+        $settings = $this->getSettings();
+        $replacements = ['{cat_name}' => $cat_info['name'], '{parent_name}' => 'Main'];
+        
+        $instructions = [
+            'title' => str_replace(array_keys($replacements), array_values($replacements), 
+                $template ? ($template['prompt_meta_title'] ?: $settings['prompt_meta_title']) : $settings['prompt_meta_title']),
+            'descr' => str_replace(array_keys($replacements), array_values($replacements), 
+                $template ? ($template['prompt_meta_descr'] ?: $settings['prompt_meta_descr']) : $settings['prompt_meta_descr']),
+            'keywords' => str_replace(array_keys($replacements), array_values($replacements), 
+                $template ? ($template['prompt_keywords'] ?: $settings['prompt_keywords']) : $settings['prompt_keywords']),
+            'html' => str_replace(array_keys($replacements), array_values($replacements), 
+                $template ? ($template['prompt_description'] ?: $settings['prompt_description']) : $settings['prompt_description'])
+        ];
+
+        $result = $this->generateAllSEO($cat_info['name'], $instructions, $language);
+
+        if (!$result['success']) {
+            $this->logUsage($cat_id, 0, $settings['default_model'], 'failed', $result['error'], 0, 'category', $language);
+            return $result;
+        }
+
+        $clean_content = $this->cleanJsonResponse($result['content']);
+        $data = json_decode($clean_content, true);
+
+        if (!$data) {
+            $this->logUsage($cat_id, $result['tokens'], $settings['default_model'], 'failed', 'Invalid JSON', $result['cost'], 'category', $language);
+            return ['success' => false, 'error' => 'Invalid JSON from AI'];
+        }
+
+        $this->logUsage($cat_id, $result['tokens'], $settings['default_model'], 'success', null, $result['cost'], 'category', $language);
+        
+        return ['success' => true, 'data' => $this->normalizeContent($data)];
+    }
+
+    private function saveDraft($category_id, $data, $language = 'tr', $template_id = null)
+    {
+        $category_id = intval($category_id);
+        $meta_title = $this->db->safesql(trim($data['meta_title'] ?? ''));
+        $meta_descr = $this->db->safesql(mb_substr(strip_tags(trim($data['meta_descr'] ?? '')), 0, 300, 'utf-8'));
+        $keywords = $this->db->safesql(trim($data['keywords'] ?? ''));
+        $description = $this->db->safesql($data['description'] ?? '');
+        $short_story = $this->db->safesql($data['short_story'] ?? '');
+        $full_story = $this->db->safesql($data['full_story'] ?? '');
+        $tags = $this->db->safesql($data['tags'] ?? '');
+        $alt_name = $this->db->safesql($data['alt_name'] ?? '');
+        $lang_sql = $this->db->safesql($language);
+        $template_sql = $template_id ? intval($template_id) : 'NULL';
+
+        $this->db->query("INSERT INTO " . PREFIX . "_catman_drafts 
+            (category_id, meta_title, meta_descr, keywords, description, short_story, full_story, tags, alt_name, language, template_id, status) 
+            VALUES ($category_id, '$meta_title', '$meta_descr', '$keywords', '$description', '$short_story', '$full_story', '$tags', '$alt_name', '$lang_sql', $template_sql, 'draft')");
+
+        return $this->db->insert_id();
+    }
+
+    public function cleanJsonResponse($content)
+    {
+        $clean = preg_replace('/[\x00-\x1F\x7F]/', '', $content);
+        $clean = preg_replace('/^```(?:json)?\s*|\s*```$/s', '', trim($clean));
+        return $clean;
+    }
+
+    private function normalizeContent($data)
+    {
+        $normalized = [];
+
+        // Normalize meta_title
+        if (isset($data['meta_title'])) $normalized['meta_title'] = $data['meta_title'];
+        elseif (isset($data['title'])) $normalized['meta_title'] = $data['title'];
+
+        // Normalize meta_descr
+        if (isset($data['meta_descr'])) $normalized['meta_descr'] = $data['meta_descr'];
+        elseif (isset($data['description'])) $normalized['meta_descr'] = $data['description'];
+
+        // Normalize description/content
+        if (isset($data['html_content'])) $normalized['description'] = $data['html_content'];
+        elseif (isset($data['content'])) $normalized['description'] = $data['content'];
+        elseif (isset($data['description'])) $normalized['description'] = $data['description'];
+
+        // Normalize keywords
+        if (isset($data['keywords'])) {
+            $normalized['keywords'] = is_array($data['keywords']) ? implode(', ', $data['keywords']) : $data['keywords'];
+        }
+
+        // Normalize tags
+        if (isset($data['tags'])) {
+            $normalized['tags'] = is_array($data['tags']) ? implode(', ', $data['tags']) : $data['tags'];
+        }
+
+        // Pass through other fields
+        $pass_fields = ['short_story', 'full_story', 'alt_name'];
+        foreach ($pass_fields as $field) {
+            if (isset($data[$field])) $normalized[$field] = $data[$field];
+        }
+
+        return array_merge($data, $normalized);
+    }
+
+    // ========================================================================
+    // SCHEDULED TASKS (Feature 2)
+    // ========================================================================
+    public function processScheduledTasks()
+    {
+        $now = date('Y-m-d H:i:s');
+        $tasks = $this->db->query("SELECT * FROM " . PREFIX . "_catman_schedules WHERE is_active=1 AND next_run <= '$now'");
+        
+        while ($task = $this->db->get_row($tasks)) {
+            $this->executeScheduledTask($task);
+        }
+    }
+
+    private function executeScheduledTask($task)
+    {
+        // Update last_run and calculate next_run
+        $this->db->query("UPDATE " . PREFIX . "_catman_schedules SET last_run=NOW(), run_count=run_count+1 WHERE id='{$task['id']}'");
+        
+        $next_run = $this->calculateNextRun($task);
+        $this->db->query("UPDATE " . PREFIX . "_catman_schedules SET next_run='$next_run' WHERE id='{$task['id']}'");
+
+        // Execute task based on type
+        if ($task['task_type'] === 'batch' && !empty($task['category_ids'])) {
+            $cat_ids = explode(',', $task['category_ids']);
+            $items = [];
+            
+            foreach ($cat_ids as $cat_id) {
+                $cat = $this->db->super_query("SELECT id, name FROM " . PREFIX . "_category WHERE id=" . intval(trim($cat_id)));
+                if ($cat) {
+                    $items[] = ['type' => 'category', 'id' => $cat['id'], 'title' => $cat['name']];
+                }
+            }
+            
+            if (!empty($items)) {
+                $this->createBatch($items, $task['language'], $task['template_id'], $task['generate_image']);
+            }
+        }
+    }
+
+    private function calculateNextRun($task)
+    {
+        $now = time();
+        $time = strtotime(date('Y-m-d') . ' ' . $task['schedule_time']);
+        
+        switch ($task['schedule_type']) {
+            case 'hourly':
+                return date('Y-m-d H:i:s', strtotime('+1 hour', $now));
+            case 'daily':
+                $next = strtotime('+1 day', $time);
+                return date('Y-m-d H:i:s', $next);
+            case 'weekly':
+                $next = strtotime('+1 week', $time);
+                return date('Y-m-d H:i:s', $next);
+            case 'monthly':
+                $next = strtotime('+1 month', $time);
+                return date('Y-m-d H:i:s', $next);
+            default:
+                return date('Y-m-d H:i:s', strtotime('+1 day', $now));
+        }
+    }
+
+    // ========================================================================
+    // UTILITY METHODS
+    // ========================================================================
+    public function testConnection() {
+        $cat_name = "PingTest";
+        $instruction_map = ['test' => 'Ping. Return {"status":"ok"} JSON only.'];
+        return $this->generateAllSEO($cat_name, $instruction_map);
+    }
+
+    public function getSettings()
+    {
+        return $this->settings;
+    }
+
+    public function getSupportedLanguages()
+    {
+        return $this->supported_languages;
+    }
+
+    public function getTemplates()
+    {
+        $templates = [];
+        $rows = $this->db->query("SELECT * FROM " . PREFIX . "_catman_templates ORDER BY is_default DESC, name ASC");
+        while ($row = $this->db->get_row($rows)) {
+            $templates[] = $row;
+        }
+        return $templates;
+    }
+
+    public function getStatistics($period = 'month')
+    {
+        $where = '';
+        if ($period === 'today') {
+            $where = "WHERE DATE(timestamp) = CURDATE()";
+        } elseif ($period === 'week') {
+            $where = "WHERE timestamp >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+        } elseif ($period === 'month') {
+            $where = "WHERE timestamp >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
+        }
+
+        $stats = $this->db->super_query("SELECT 
+            COUNT(*) as total_requests,
+            SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) as successful,
+            SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as failed,
+            SUM(tokens_used) as total_tokens,
+            SUM(cost_estimated) as total_cost,
+            AVG(tokens_used) as avg_tokens
+            FROM " . PREFIX . "_catman_logs $where");
+
+        $by_model = [];
+        $rows = $this->db->query("SELECT model, COUNT(*) as count, SUM(tokens_used) as tokens FROM " . PREFIX . "_catman_logs $where GROUP BY model ORDER BY count DESC");
+        while ($row = $this->db->get_row($rows)) {
+            $by_model[] = $row;
+        }
+
+        $by_language = [];
+        $rows = $this->db->query("SELECT language, COUNT(*) as count FROM " . PREFIX . "_catman_logs $where GROUP BY language ORDER BY count DESC");
+        while ($row = $this->db->get_row($rows)) {
+            $by_language[] = $row;
+        }
+
+        $daily = [];
+        $rows = $this->db->query("SELECT DATE(timestamp) as date, COUNT(*) as count, SUM(tokens_used) as tokens FROM " . PREFIX . "_catman_logs $where GROUP BY DATE(timestamp) ORDER BY date DESC LIMIT 30");
+        while ($row = $this->db->get_row($rows)) {
+            $daily[] = $row;
+        }
+
+        return [
+            'summary' => $stats,
+            'by_model' => $by_model,
+            'by_language' => $by_language,
+            'daily' => $daily
+        ];
+    }
+}
+
+// ============================================================================
+// INITIALIZE
+// ============================================================================
+$catman = new CatManAI();
+$action = isset($_REQUEST['action']) ? $_REQUEST['action'] : '';
+
+// ============================================================================
+// AJAX ACTION HANDLERS
+// ============================================================================
+
+// --- GENERATE NEWS ---
+if ($action == 'generate_news') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        die(json_encode(['success' => false, 'error' => 'Security Error']));
+    
+    // Rate Limiting
+    $rate_limit_key = 'last_request_time_' . $member_id['user_id'];
+    $last_req = $db->super_query("SELECT value FROM ".PREFIX."_catman_settings WHERE name='$rate_limit_key'");
+    if ($last_req && (time() - intval($last_req['value'])) < 3) {
+        die(json_encode(['success' => false, 'error' => 'Çok hızlı istek. 3 saniye bekleyin.']));
+    }
+    $db->query("INSERT INTO ".PREFIX."_catman_settings (name,value) VALUES ('$rate_limit_key','".time()."') ON DUPLICATE KEY UPDATE value='".time()."'");
+
+    $title = mb_substr(trim(strip_tags($_GET['title'])), 0, 200, 'UTF-8');
+    $language = isset($_GET['language']) ? preg_replace('/[^a-z]/', '', $_GET['language']) : 'tr';
+    $template_id = isset($_GET['template_id']) ? intval($_GET['template_id']) : null;
+    
+    if (empty($title)) die(json_encode(['success' => false, 'error' => 'Title Required']));
+
+    $result = $catman->generateNews($title, $language, $template_id);
+    if (!$result['success']) die(json_encode(['success' => false, 'error' => $result['error']]));
+
+    $clean_content = $catman->cleanJsonResponse($result['content']);
+    $data = json_decode($clean_content, true);
+
+    if (!$data) {
+        if (preg_match('/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/s', $clean_content, $matches)) {
+            $data = json_decode($matches[0], true);
+        }
+    }
+
+    if (!$data) die(json_encode(['success' => false, 'error' => 'Invalid JSON', 'raw' => $result['content']]));
+
+    // Normalize arrays to strings
+    if (isset($data['tags']) && is_array($data['tags'])) $data['tags'] = implode(', ', $data['tags']);
+    if (isset($data['keywords']) && is_array($data['keywords'])) $data['keywords'] = implode(', ', $data['keywords']);
+
+    while (ob_get_level()) { ob_end_clean(); }
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['success' => true, 'data' => $data]);
+    exit;
+
+// --- TEST CONNECTION ---
+} elseif ($action == 'test_connection') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        die(json_encode(['success' => false, 'error' => 'Security Error']));
+    
+    $result = $catman->testConnection();
+    
+    while (ob_get_level()) { ob_end_clean(); }
+    header('Content-Type: application/json; charset=utf-8');
+    
+    if ($result['success']) {
+        echo json_encode(['success' => true, 'message' => 'Bağlantı Başarılı! AI Yanıt verdi.']);
+    } else {
+        echo json_encode(['success' => false, 'error' => $result['error']]);
+    }
+    exit;
+
+// --- GENERATE SINGLE CATEGORY ---
+} elseif ($action == 'generate_single') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        die(json_encode(['success' => false, 'error' => 'Security Error']));
+    
+    $cat_id = intval($_GET['cat_id']);
+    $language = isset($_GET['language']) ? preg_replace('/[^a-z]/', '', $_GET['language']) : 'tr';
+    $template_id = isset($_GET['template_id']) ? intval($_GET['template_id']) : null;
+    
+    $result = $catman->generateCategoryContent($cat_id, $language, $template_id);
+    
+    while (ob_get_level()) { ob_end_clean(); }
+    header('Content-Type: application/json; charset=utf-8');
+    
+    if ($result['success']) {
+        $draft_id = $catman->saveDraft($cat_id, $result['data'], $language, $template_id);
+        echo json_encode(['success' => true, 'draft_id' => $draft_id]);
+    } else {
+        echo json_encode(['success' => false, 'error' => $result['error']]);
+    }
+    exit;
+
+// --- GENERATE IMAGE ---
+} elseif ($action == 'generate_image') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        die(json_encode(['success' => false, 'error' => 'Security Error']));
+    
+    $title = mb_substr(trim(strip_tags($_GET['title'])), 0, 200, 'UTF-8');
+    $draft_id = isset($_GET['draft_id']) ? intval($_GET['draft_id']) : null;
+    
+    if (empty($title)) die(json_encode(['success' => false, 'error' => 'Title Required']));
+    
+    $result = $catman->generateImage($title, $draft_id);
+    
+    while (ob_get_level()) { ob_end_clean(); }
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($result);
+    exit;
+
+// --- CONTENT REVISION ---
+} elseif ($action == 'revise_content') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        die(json_encode(['success' => false, 'error' => 'Security Error']));
+    
+    $content = isset($_POST['content']) ? $_POST['content'] : '';
+    $type = isset($_POST['type']) ? preg_replace('/[^a-z]/', '', $_POST['type']) : 'improve';
+    $draft_id = isset($_POST['draft_id']) ? intval($_POST['draft_id']) : null;
+    $target_language = isset($_POST['target_language']) ? preg_replace('/[^a-z]/', '', $_POST['target_language']) : null;
+    
+    if (empty($content)) die(json_encode(['success' => false, 'error' => 'Content Required']));
+    
+    $result = $catman->reviseContent($content, $type, $draft_id, $target_language);
+    
+    while (ob_get_level()) { ob_end_clean(); }
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($result);
+    exit;
+
+// --- BATCH OPERATIONS ---
+} elseif ($action == 'create_batch') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        die(json_encode(['success' => false, 'error' => 'Security Error']));
+    
+    $items_json = isset($_POST['items']) ? $_POST['items'] : '[]';
+    $language = isset($_POST['language']) ? preg_replace('/[^a-z]/', '', $_POST['language']) : 'tr';
+    $template_id = isset($_POST['template_id']) ? intval($_POST['template_id']) : null;
+    $generate_image = isset($_POST['generate_image']) && $_POST['generate_image'] == '1';
+    
+    $items = json_decode($items_json, true);
+    if (empty($items)) die(json_encode(['success' => false, 'error' => 'No items provided']));
+    
+    $batch_id = $catman->createBatch($items, $language, $template_id, $generate_image);
+    
+    while (ob_get_level()) { ob_end_clean(); }
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['success' => true, 'batch_id' => $batch_id]);
+    exit;
+
+} elseif ($action == 'process_batch') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        die(json_encode(['success' => false, 'error' => 'Security Error']));
+    
+    $batch_id = preg_replace('/[^a-z0-9_]/', '', $_GET['batch_id']);
+    $result = $catman->processNextQueueItem($batch_id);
+    $status = $catman->getBatchStatus($batch_id);
+    
+    while (ob_get_level()) { ob_end_clean(); }
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['result' => $result, 'status' => $status]);
+    exit;
+
+} elseif ($action == 'batch_status') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        die(json_encode(['success' => false, 'error' => 'Security Error']));
+    
+    $batch_id = preg_replace('/[^a-z0-9_]/', '', $_GET['batch_id']);
+    $status = $catman->getBatchStatus($batch_id);
+    
+    while (ob_get_level()) { ob_end_clean(); }
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['success' => true, 'status' => $status]);
+    exit;
+
+// --- TEMPLATE MANAGEMENT ---
+} elseif ($action == 'save_template') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        msg("error", "Hata", "Security Error");
+    
+    $id = isset($_POST['template_id']) ? intval($_POST['template_id']) : 0;
+    $name = $db->safesql($_POST['template_name']);
+    $description = $db->safesql($_POST['template_description']);
+    $category_ids = $db->safesql($_POST['template_categories']);
+    $is_default = isset($_POST['is_default']) ? 1 : 0;
+    
+    $prompt_fields = ['prompt_meta_title', 'prompt_meta_descr', 'prompt_keywords', 'prompt_description', 'prompt_news', 'prompt_image'];
+    $prompt_values = [];
+    foreach ($prompt_fields as $field) {
+        $prompt_values[$field] = $db->safesql($_POST[$field] ?? '');
+    }
+    
+    $word_limit = intval($_POST['word_limit'] ?? 500);
+    $tag_count = intval($_POST['tag_count'] ?? 10);
+
+    if ($is_default) {
+        $db->query("UPDATE " . PREFIX . "_catman_templates SET is_default=0");
+    }
+
+    if ($id > 0) {
+        $db->query("UPDATE " . PREFIX . "_catman_templates SET 
+            name='$name', description='$description', category_ids='$category_ids', is_default=$is_default,
+            prompt_meta_title='{$prompt_values['prompt_meta_title']}', prompt_meta_descr='{$prompt_values['prompt_meta_descr']}',
+            prompt_keywords='{$prompt_values['prompt_keywords']}', prompt_description='{$prompt_values['prompt_description']}',
+            prompt_news='{$prompt_values['prompt_news']}', prompt_image='{$prompt_values['prompt_image']}',
+            word_limit=$word_limit, tag_count=$tag_count WHERE id=$id");
+    } else {
+        $db->query("INSERT INTO " . PREFIX . "_catman_templates 
+            (name, description, category_ids, is_default, prompt_meta_title, prompt_meta_descr, prompt_keywords, prompt_description, prompt_news, prompt_image, word_limit, tag_count) 
+            VALUES ('$name', '$description', '$category_ids', $is_default, '{$prompt_values['prompt_meta_title']}', '{$prompt_values['prompt_meta_descr']}', '{$prompt_values['prompt_keywords']}', '{$prompt_values['prompt_description']}', '{$prompt_values['prompt_news']}', '{$prompt_values['prompt_image']}', $word_limit, $tag_count)");
+    }
+    
+    msg("info", "Başarılı", "Şablon kaydedildi!", "?mod=catman&action=templates");
+
+} elseif ($action == 'delete_template') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        die("Security Error");
+    
+    $id = intval($_GET['id']);
+    $db->query("DELETE FROM " . PREFIX . "_catman_templates WHERE id=$id");
+    
+    msg("info", "Silindi", "Şablon silindi.", "?mod=catman&action=templates");
+
+// --- SCHEDULE MANAGEMENT ---
+} elseif ($action == 'save_schedule') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        msg("error", "Hata", "Security Error");
+    
+    $id = isset($_POST['schedule_id']) ? intval($_POST['schedule_id']) : 0;
+    $name = $db->safesql($_POST['schedule_name']);
+    $task_type = $db->safesql($_POST['task_type']);
+    $category_ids = $db->safesql($_POST['schedule_categories']);
+    $schedule_type = $db->safesql($_POST['schedule_type']);
+    $schedule_time = $db->safesql($_POST['schedule_time']);
+    $schedule_day = intval($_POST['schedule_day'] ?? 0);
+    $template_id = !empty($_POST['schedule_template']) ? intval($_POST['schedule_template']) : 'NULL';
+    $language = $db->safesql($_POST['schedule_language'] ?? 'tr');
+    $generate_image = isset($_POST['schedule_generate_image']) ? 1 : 0;
+    $auto_approve = isset($_POST['schedule_auto_approve']) ? 1 : 0;
+    $is_active = isset($_POST['is_active']) ? 1 : 0;
+
+    if ($id > 0) {
+        $db->query("UPDATE " . PREFIX . "_catman_schedules SET 
+            name='$name', task_type='$task_type', category_ids='$category_ids', schedule_type='$schedule_type',
+            schedule_time='$schedule_time', schedule_day=$schedule_day, template_id=$template_id,
+            language='$language', generate_image=$generate_image, auto_approve=$auto_approve, is_active=$is_active
+            WHERE id=$id");
+    } else {
+        // Calculate first next_run
+        $next_run = date('Y-m-d H:i:s', strtotime(date('Y-m-d') . ' ' . $schedule_time));
+        if (strtotime($next_run) < time()) {
+            $next_run = date('Y-m-d H:i:s', strtotime('+1 day', strtotime($next_run)));
+        }
+        
+        $db->query("INSERT INTO " . PREFIX . "_catman_schedules 
+            (name, task_type, category_ids, schedule_type, schedule_time, schedule_day, template_id, language, generate_image, auto_approve, is_active, next_run) 
+            VALUES ('$name', '$task_type', '$category_ids', '$schedule_type', '$schedule_time', $schedule_day, $template_id, '$language', $generate_image, $auto_approve, $is_active, '$next_run')");
+    }
+    
+    msg("info", "Başarılı", "Zamanlama kaydedildi!", "?mod=catman&action=schedules");
+
+} elseif ($action == 'delete_schedule') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        die("Security Error");
+    
+    $id = intval($_GET['id']);
+    $db->query("DELETE FROM " . PREFIX . "_catman_schedules WHERE id=$id");
+    
+    msg("info", "Silindi", "Zamanlama silindi.", "?mod=catman&action=schedules");
+
+} elseif ($action == 'toggle_schedule') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        die("Security Error");
+    
+    $id = intval($_GET['id']);
+    $db->query("UPDATE " . PREFIX . "_catman_schedules SET is_active=NOT is_active WHERE id=$id");
+    
+    header("Location: ?mod=catman&action=schedules");
+    exit;
+
+// --- CRON TRIGGER ---
+} elseif ($action == 'run_cron') {
+    // Can be called via: admin.php?mod=catman&action=run_cron&cron_key=YOUR_KEY
+    // Or from admin panel button (uses user_hash)
+    $cron_key = isset($_GET['cron_key']) ? $_GET['cron_key'] : '';
+    $stored_key = $catman->getSettings()['cron_secret_key'] ?? '';
+    
+    $is_admin = (isset($_REQUEST['user_hash']) && $_REQUEST['user_hash'] == $dle_login_hash);
+    $is_cron = (!empty($stored_key) && $cron_key === $stored_key);
+    
+    if (!$is_admin && !$is_cron) {
+        die(json_encode(['success' => false, 'error' => 'Unauthorized. Provide valid cron_key or admin hash.']));
+    }
+    
+    $catman->processScheduledTasks();
+    
+    while (ob_get_level()) { ob_end_clean(); }
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['success' => true, 'message' => 'Zamanlanmış görevler kontrol edildi.', 'time' => date('Y-m-d H:i:s')]);
+    exit;
+
+// --- DRAFT MANAGEMENT ---
+} elseif ($action == 'approve_draft') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        die("Security Error");
+    
+    $id = intval($_GET['id']);
+    $draft = $db->super_query("SELECT * FROM " . PREFIX . "_catman_drafts WHERE id='$id'");
+    
+    if ($draft) {
+        $safe_meta_descr = $db->safesql(mb_substr(strip_tags($draft['meta_descr']), 0, 300, 'utf-8'));
+        $db->query("UPDATE " . PREFIX . "_category SET 
+            metatitle='{$db->safesql($draft['meta_title'])}', 
+            descr='{$safe_meta_descr}', 
+            keywords='{$db->safesql($draft['keywords'])}', 
+            fulldescr='{$db->safesql($draft['description'])}' 
+            WHERE id='{$draft['category_id']}'");
+        $db->query("UPDATE " . PREFIX . "_catman_drafts SET status='approved' WHERE id='$id'");
+        clear_cache();
+        msg("info", "Başarılı", "Kategori güncellendi!", "?mod=catman&action=drafts");
+    }
+
+} elseif ($action == 'delete_draft') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        die("Security Error");
+    
+    $id = intval($_GET['id']);
+    $db->query("DELETE FROM " . PREFIX . "_catman_drafts WHERE id='$id'");
+    msg("info", "Silindi", "Taslak silindi.", "?mod=catman&action=drafts");
+
+} elseif ($action == 'preview_draft') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        die(json_encode(['success' => false, 'error' => 'Security Error']));
+    
+    $id = intval($_GET['id']);
+    $draft = $db->super_query("SELECT * FROM " . PREFIX . "_catman_drafts WHERE id='$id'");
+    
+    while (ob_get_level()) { ob_end_clean(); }
+    header('Content-Type: application/json; charset=utf-8');
+    
+    if ($draft) {
+        echo json_encode(['success' => true, 'draft' => $draft]);
+    } else {
+        echo json_encode(['success' => false, 'error' => 'Draft not found']);
+    }
+    exit;
+
+// --- QUOTA MANAGEMENT ---
+} elseif ($action == 'save_quota') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        msg("error", "Hata", "Security Error");
+    
+    $providers = ['openai', 'gemini', 'claude', 'qwen'];
+    
+    foreach ($providers as $provider) {
+        $token_limit = intval($_POST[$provider . '_token_limit'] ?? 1000000);
+        $request_limit = intval($_POST[$provider . '_request_limit'] ?? 1000);
+        $cost_limit = floatval($_POST[$provider . '_cost_limit'] ?? 100);
+        $is_unlimited = isset($_POST[$provider . '_unlimited']) ? 1 : 0;
+        
+        $provider_sql = $db->safesql($provider);
+        $today = date('Y-m-d');
+        
+        $exists = $db->super_query("SELECT id FROM " . PREFIX . "_catman_quota WHERE provider='$provider_sql' AND period_start <= '$today' AND period_end >= '$today'");
+        
+        if ($exists) {
+            $db->query("UPDATE " . PREFIX . "_catman_quota SET token_limit=$token_limit, request_limit=$request_limit, cost_limit=$cost_limit, is_unlimited=$is_unlimited WHERE id={$exists['id']}");
+        } else {
+            $period_end = date('Y-m-d', strtotime('+1 month'));
+            $db->query("INSERT INTO " . PREFIX . "_catman_quota (provider, period_start, period_end, token_limit, request_limit, cost_limit, is_unlimited) VALUES ('$provider_sql', '$today', '$period_end', $token_limit, $request_limit, $cost_limit, $is_unlimited)");
+        }
+    }
+    
+    msg("info", "Başarılı", "Kota ayarları kaydedildi!", "?mod=catman&action=quota");
+
+// --- SETTINGS ---
+} elseif ($action == 'save_settings') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        msg("error", "Hata", "Security Error");
+
+    $providers = ['openai', 'gemini', 'qwen', 'claude'];
+    foreach ($providers as $provider) {
+        $key_field = $provider . '_api_key';
+        if (isset($_POST[$key_field]) && !empty($_POST[$key_field]) && strpos($_POST[$key_field], '*') === false) {
+            $catman->saveApiKey($_POST[$key_field], $provider);
+        }
+    }
+
+    $settings_to_save = [
+        'ai_provider', 'default_model', 'default_language', 'image_enabled', 'image_provider', 'image_size',
+        'auto_approve', 'batch_delay', 'prompt_meta_title', 'prompt_meta_descr', 'prompt_keywords',
+        'prompt_description', 'prompt_news_generation', 'prompt_image', 'prompt_rewrite', 'prompt_improve',
+        'prompt_summarize', 'prompt_expand', 'prompt_translate', 'news_word_limit', 'news_tag_count'
+    ];
+    
+    foreach ($settings_to_save as $key) {
+        if (isset($_POST[$key])) {
+            $val = $db->safesql($_POST[$key]);
+            $db->query("INSERT INTO " . PREFIX . "_catman_settings (`name`, `value`) VALUES ('$key', '$val') ON DUPLICATE KEY UPDATE `value`='$val'");
+        }
+    }
+    // Auto-generate cron secret key if missing
+    $existing_cron_key = $db->super_query("SELECT value FROM " . PREFIX . "_catman_settings WHERE name='cron_secret_key'");
+    if (!$existing_cron_key || empty($existing_cron_key['value'])) {
+        $cron_key = bin2hex(random_bytes(16));
+        $db->query("INSERT INTO " . PREFIX . "_catman_settings (name, value) VALUES ('cron_secret_key', '$cron_key') ON DUPLICATE KEY UPDATE value='$cron_key'");
+    }
+
+    msg("info", "Başarılı", "Ayarlar kaydedildi!", "?mod=catman&action=settings");
+
+// --- DELETE API KEY ---
+} elseif ($action == 'delete_api_key') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        die(json_encode(['success' => false, 'error' => 'Security Error']));
+    
+    $provider = preg_replace('/[^a-z]/', '', $_GET['provider']);
+    $key_map = ['openai' => 'openai_api_key', 'gemini' => 'gemini_api_key', 'qwen' => 'qwen_api_key', 'claude' => 'claude_api_key'];
+    
+    if (isset($key_map[$provider])) {
+        $key_name = $key_map[$provider];
+        $db->query("DELETE FROM " . PREFIX . "_catman_settings WHERE name='$key_name'");
+        while (ob_get_level()) { ob_end_clean(); }
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['success' => true]);
+        exit;
+    }
+    die(json_encode(['success' => false, 'error' => 'Invalid provider']));
+
+// --- STATISTICS API ---
+} elseif ($action == 'get_stats') {
+    if (!$_REQUEST['user_hash'] OR $_REQUEST['user_hash'] != $dle_login_hash) 
+        die(json_encode(['success' => false, 'error' => 'Security Error']));
+    
+    $period = isset($_GET['period']) ? preg_replace('/[^a-z]/', '', $_GET['period']) : 'month';
+    $stats = $catman->getStatistics($period);
+    
+    while (ob_get_level()) { ob_end_clean(); }
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['success' => true, 'stats' => $stats]);
+    exit;
+}
+
+// ============================================================================
+// VIEW RENDERING
+// ============================================================================
+echoheader("<i class=\"fa fa-magic position-left\"></i> DLE AI Studio", "Yapay Zeka İçerik Motoru v1.0");
+
+// Navigation
+echo '<div class="navbar navbar-default navbar-component navbar-xs">
+    <ul class="nav navbar-nav visible-xs-block"><li class="full-width text-center"><a data-toggle="collapse" data-target="#navbar-filter"><i class="fa fa-bars"></i></a></li></ul>
+    <div class="navbar-collapse collapse" id="navbar-filter">
+        <ul class="nav navbar-nav">
+            <li class="' . (empty($action) || $action == 'dashboard' ? 'active' : '') . '"><a href="?mod=catman"><i class="fa fa-dashboard"></i> Dashboard</a></li>
+            <li class="' . ($action == 'generator' ? 'active' : '') . '"><a href="?mod=catman&action=generator"><i class="fa fa-list"></i> Kategori Üretici</a></li>
+            <li class="' . ($action == 'batch' ? 'active' : '') . '"><a href="?mod=catman&action=batch"><i class="fa fa-tasks"></i> Toplu İşlem</a></li>
+            <li class="' . ($action == 'drafts' ? 'active' : '') . '"><a href="?mod=catman&action=drafts"><i class="fa fa-file-text-o"></i> Taslaklar</a></li>
+            <li class="' . ($action == 'templates' ? 'active' : '') . '"><a href="?mod=catman&action=templates"><i class="fa fa-file-code-o"></i> Şablonlar</a></li>
+            <li class="' . ($action == 'schedules' ? 'active' : '') . '"><a href="?mod=catman&action=schedules"><i class="fa fa-clock-o"></i> Zamanlama</a></li>
+            <li class="' . ($action == 'quota' ? 'active' : '') . '"><a href="?mod=catman&action=quota"><i class="fa fa-sliders"></i> Kota</a></li>
+            <li class="' . ($action == 'statistics' ? 'active' : '') . '"><a href="?mod=catman&action=statistics"><i class="fa fa-bar-chart"></i> İstatistik</a></li>
+            <li class="' . ($action == 'settings' ? 'active' : '') . '"><a href="?mod=catman&action=settings"><i class="fa fa-cogs"></i> Ayarlar</a></li>
+        </ul>
+    </div>
+</div>';
+
+echo '<div class="panel panel-default"><div class="panel-body">';
+
+// ============================================================================
+// DASHBOARD
+// ============================================================================
+if (empty($action) || $action == 'dashboard') {
+    $stats = $catman->getStatistics('month');
+    $summary = $stats['summary'];
+    $draft_count = $db->super_query("SELECT COUNT(*) as count FROM " . PREFIX . "_catman_drafts WHERE status='draft'");
+    $schedule_active = $db->super_query("SELECT COUNT(*) as count FROM " . PREFIX . "_catman_schedules WHERE is_active=1");
+    $queue_pending = $db->super_query("SELECT COUNT(*) as count FROM " . PREFIX . "_catman_queue WHERE status='pending'");
+    
+    // Quota check
+    $quotaCheck = $catman->checkQuota();
+    $quota_class = $quotaCheck['allowed'] ? 'alert-success' : 'alert-danger';
+    $quota_msg = $quotaCheck['allowed'] ? 'Kota kullanılabilir' : implode(', ', $quotaCheck['warnings'] ?? ['Kota aşıldı']);
+    
+    echo '<div class="row">
+        <div class="col-sm-3"><div class="alert alert-info alert-styled-left alert-arrow-left alert-component"><h5>Toplam İstek</h5><p style="font-size: 28px;">' . number_format($summary['total_requests']) . '</p></div></div>
+        <div class="col-sm-3"><div class="alert alert-warning alert-styled-left alert-arrow-left alert-component"><h5>Token / Maliyet</h5><p style="font-size: 24px;">' . number_format($summary['total_tokens']) . ' / $' . number_format($summary['total_cost'], 4) . '</p></div></div>
+        <div class="col-sm-3"><div class="alert alert-success alert-styled-left alert-arrow-left alert-component"><h5>Bekleyen Taslaklar</h5><p style="font-size: 28px;">' . intval($draft_count['count']) . '</p></div></div>
+        <div class="col-sm-3"><div class="alert ' . $quota_class . ' alert-styled-left alert-arrow-left alert-component"><h5>Kota Durumu</h5><p style="font-size: 18px;">' . htmlspecialchars($quota_msg) . '</p></div></div>
+    </div>';
+    
+    // Quick Stats Row
+    echo '<div class="row">
+        <div class="col-sm-4"><div class="panel panel-default"><div class="panel-heading">Aktif Zamanlama</div><div class="panel-body text-center"><span style="font-size:36px;">' . intval($schedule_active['count']) . '</span></div></div></div>
+        <div class="col-sm-4"><div class="panel panel-default"><div class="panel-heading">Sırada Bekleyen</div><div class="panel-body text-center"><span style="font-size:36px;">' . intval($queue_pending['count']) . '</span></div></div></div>
+        <div class="col-sm-4"><div class="panel panel-default"><div class="panel-heading">Başarı Oranı</div><div class="panel-body text-center"><span style="font-size:36px;">' . ($summary['total_requests'] > 0 ? round($summary['successful'] / $summary['total_requests'] * 100, 1) : 0) . '%</span></div></div></div>
+    </div>';
+
+    // Recent Logs
+    echo '<div class="panel panel-default"><div class="panel-heading"><i class="fa fa-history"></i> Son İşlemler</div><table class="table table-striped"><thead><tr><th>ID</th><th>Tip</th><th>Model</th><th>Token</th><th>Dil</th><th>Durum</th><th>Tarih</th></tr></thead><tbody>';
+    $logs = $db->query("SELECT * FROM " . PREFIX . "_catman_logs ORDER BY id DESC LIMIT 10");
+    while ($row = $db->get_row($logs)) {
+        $status_badge = $row['status'] == 'success' ? 'label-success' : 'label-danger';
+        echo '<tr>
+            <td>'.$row['id'].'</td>
+            <td>'.htmlspecialchars($row['content_type']).'</td>
+            <td>'.htmlspecialchars($row['model']).'</td>
+            <td>'.number_format($row['tokens_used']).'</td>
+            <td>'.htmlspecialchars($row['language']).'</td>
+            <td><span class="label '.$status_badge.'">'.$row['status'].'</span></td>
+            <td>'.$row['timestamp'].'</td>
+        </tr>';
+    }
+    echo '</tbody></table></div>';
+
+    // By Model Chart Data
+    if (!empty($stats['by_model'])) {
+        echo '<div class="panel panel-default"><div class="panel-heading"><i class="fa fa-pie-chart"></i> Model Kullanımı</div><div class="panel-body">';
+        echo '<div class="row">';
+        foreach ($stats['by_model'] as $model) {
+            $percent = $summary['total_requests'] > 0 ? round($model['count'] / $summary['total_requests'] * 100) : 0;
+            echo '<div class="col-sm-3 text-center"><div style="font-size:24px;font-weight:bold;">'.$percent.'%</div><div>'.htmlspecialchars($model['model']).'</div><div class="text-muted">'.number_format($model['count']).' istek</div></div>';
+        }
+        echo '</div></div></div>';
+    }
+
+// ============================================================================
+// GENERATOR PAGE
+// ============================================================================
+} elseif ($action == 'generator') {
+    $templates = $catman->getTemplates();
+    $languages = $catman->getSupportedLanguages();
+    $settings = $catman->getSettings();
+    $current_lang = $settings['default_language'] ?? 'tr';
+    
+    echo '<div class="alert alert-info alert-styled-left alert-arrow-left alert-component">
+        <h4><i class="fa fa-info-circle"></i> Kategori İçerik Üretici</h4>
+        <p>Tekli veya toplu kategori içerik üretimi yapabilirsiniz. Şablon ve dil seçerek özelleştirin.</p>
+    </div>';
+    
+    // Quick Controls
+    echo '<div class="panel panel-default"><div class="panel-heading">Hızlı Ayarlar</div><div class="panel-body">
+        <div class="row">
+            <div class="col-sm-3">
+                <label>İçerik Dili</label>
+                <select id="content_language" class="form-control">';
+                foreach ($languages as $code => $name) {
+                    echo '<option value="'.$code.'" '.($code == $current_lang ? 'selected' : '').'>'.$name.'</option>';
+                }
+                echo '</select>
+            </div>
+            <div class="col-sm-3">
+                <label>Şablon</label>
+                <select id="content_template" class="form-control">
+                    <option value="">-- Varsayılan --</option>';
+                foreach ($templates as $tpl) {
+                    echo '<option value="'.$tpl['id'].'">'.htmlspecialchars($tpl['name']).'</option>';
+                }
+                echo '</select>
+            </div>
+            <div class="col-sm-3">
+                <label>Görsel Üret</label><br>
+                <label class="checkbox-inline"><input type="checkbox" id="generate_image"> DALL-E ile görsel</label>
+            </div>
+            <div class="col-sm-3">
+                <label>&nbsp;</label><br>
+                <button class="btn btn-warning" onclick="processSelectedBatch()"><i class="fa fa-flash"></i> Seçilenleri Toplu İşle</button>
+            </div>
+        </div>
+    </div></div>';
+    
+    // Category Table
+    echo '<div class="table-responsive"><table class="table table-striped table-bordered" id="cat_table">
+            <thead><tr>
+                <th><input type="checkbox" id="select_all_cats"></th>
+                <th>ID</th>
+                <th>İsim</th>
+                <th>Durum</th>
+                <th>İşlem</th>
+            </tr></thead><tbody>';
+    
+    $cats = $db->query("SELECT * FROM " . PREFIX . "_category ORDER BY posi ASC");
+    while ($row = $db->get_row($cats)) {
+        $draft = $db->super_query("SELECT id FROM " . PREFIX . "_catman_drafts WHERE category_id='{$row['id']}' AND status='draft'");
+        $has_meta = !empty($row['metatitle']);
+        
+        $status_badge = $has_meta ? '<span class="label label-success">SEO Mevcut</span>' : '<span class="label label-default">Bekliyor</span>';
+        if ($draft) $status_badge = '<span class="label label-warning">Taslak</span>';
+        
+        $btn = $draft ? 
+            '<a href="?mod=catman&action=drafts" class="btn btn-warning btn-sm"><i class="fa fa-file-text"></i> Taslak</a>' : 
+            '<button class="btn btn-primary btn-sm btn-generate" onclick="generateSingle('.$row['id'].', \''.htmlspecialchars($row['name'], ENT_QUOTES).'\'); return false;"><i class="fa fa-magic"></i> Oluştur</button>';
+        
+        echo '<tr id="row_'.$row['id'].'">
+            <td><input type="checkbox" class="cat-checkbox" data-id="'.$row['id'].'" data-name="'.htmlspecialchars($row['name'], ENT_QUOTES).'"></td>
+            <td>'.$row['id'].'</td>
+            <td>'.$row['name'].'</td>
+            <td class="status-cell">'.$status_badge.'</td>
+            <td class="action-cell">'.$btn.'</td>
+        </tr>';
+    }
+    echo '</tbody></table></div>';
+    
+    echo '<script>
+    var dle_login_hash = "'.$dle_login_hash.'";
+    
+    $("#select_all_cats").change(function() {
+        $(".cat-checkbox").prop("checked", $(this).prop("checked"));
+    });
+    
+    function generateSingle(catId, catName) {
+        var row = $("#row_" + catId);
+        var originalBtn = row.find(".action-cell").html();
+        var lang = $("#content_language").val();
+        var template = $("#content_template").val();
+        var genImg = $("#generate_image").prop("checked") ? 1 : 0;
+        
+        row.find(".status-cell").html("<span class=\'label label-primary\'><i class=\'fa fa-spinner fa-spin\'></i> İşleniyor...</span>");
+        row.find(".action-cell").html("<button class=\'btn btn-default btn-sm\' disabled>Lütfen bekleyin...</button>");
+        
+        DLEPush.info("İşlem başlatıldı...");
+        
+        $.get("?mod=catman&action=generate_single&cat_id=" + catId + "&language=" + lang + "&template_id=" + template + "&user_hash='.$dle_login_hash.'", function(d) {
+             if(d.success) { 
+                 row.find(".status-cell").html("<span class=\'label label-success\'>Başarılı!</span>");
+                 row.find(".action-cell").html("<a href=\'?mod=catman&action=drafts\' class=\'btn btn-warning btn-sm\'><i class=\'fa fa-file-text\'></i> Taslak</a>");
+                 DLEPush.info("Taslak oluşturuldu!"); 
+             } else { 
+                 row.find(".status-cell").html("<span class=\'label label-danger\'>Hata</span>");
+                 row.find(".action-cell").html(originalBtn);
+                 DLEPush.error(d.error); 
+             }
+        }, "json").fail(function() {
+            row.find(".status-cell").html("<span class=\'label label-danger\'>Bağlantı Hatası</span>");
+            row.find(".action-cell").html(originalBtn);
+            DLEPush.error("Sunucu hatası oluştu.");
+        });
+    }
+    
+    function processSelectedBatch() {
+        var selected = [];
+        $(".cat-checkbox:checked").each(function() {
+            selected.push({type: "category", id: $(this).data("id"), title: $(this).data("name")});
+        });
+        
+        if (selected.length === 0) {
+            DLEPush.error("Lütfen en az bir kategori seçin.");
+            return;
+        }
+        
+        if (!confirm(selected.length + " kategori için toplu işlem başlatılacak. Devam?")) return;
+        
+        var lang = $("#content_language").val();
+        var template = $("#content_template").val();
+        var genImg = $("#generate_image").prop("checked") ? 1 : 0;
+        
+        DLEPush.info("Toplu işlem başlatılıyor...");
+        
+        $.post("?mod=catman&action=create_batch&user_hash='.$dle_login_hash.'", {
+            items: JSON.stringify(selected),
+            language: lang,
+            template_id: template,
+            generate_image: genImg
+        }, function(d) {
+            if (d.success) {
+                window.location.href = "?mod=catman&action=batch&batch_id=" + d.batch_id;
+            } else {
+                DLEPush.error(d.error);
+            }
+        }, "json");
+    }
+    </script>';
+
+// ============================================================================
+// BATCH PROCESSING PAGE
+// ============================================================================
+} elseif ($action == 'batch') {
+    $batch_id = isset($_GET['batch_id']) ? preg_replace('/[^a-z0-9_]/', '', $_GET['batch_id']) : null;
+    
+    echo '<div class="alert alert-info alert-styled-left alert-arrow-left alert-component">
+        <h4><i class="fa fa-tasks"></i> Toplu İşlem Yönetimi</h4>
+        <p>Toplu içerik üretimi işlemlerini buradan yönetebilirsiniz.</p>
+    </div>';
+    
+    if ($batch_id) {
+        // Show batch progress
+        echo '<div class="panel panel-default">
+            <div class="panel-heading">Toplu İşlem: ' . htmlspecialchars($batch_id) . '</div>
+            <div class="panel-body">
+                <div class="progress" style="height:30px;">
+                    <div id="batch_progress" class="progress-bar progress-bar-striped active" role="progressbar" style="width: 0%;">0%</div>
+                </div>
+                <div id="batch_status" class="text-center">Hazırlanıyor...</div>
+                <div id="batch_log" style="max-height:300px;overflow-y:auto;margin-top:15px;"></div>
+            </div>
+        </div>';
+        
+        echo '<script>
+        var batch_id = "' . $batch_id . '";
+        var processing = false;
+        
+        function updateBatchStatus() {
+            $.get("?mod=catman&action=batch_status&batch_id=" + batch_id + "&user_hash='.$dle_login_hash.'", function(d) {
+                if (d.success) {
+                    var s = d.status;
+                    var pct = s.percentage;
+                    
+                    $("#batch_progress").css("width", pct + "%").text(pct + "%");
+                    
+                    if (s.processing > 0) {
+                        $("#batch_progress").addClass("progress-bar-striped active");
+                    } else {
+                        $("#batch_progress").removeClass("progress-bar-striped active");
+                    }
+                    
+                    $("#batch_status").html(
+                        "Toplam: " + s.total + " | " +
+                        "Tamamlandı: " + s.completed + " | " +
+                        "Başarısız: " + s.failed + " | " +
+                        "Bekleyen: " + s.pending
+                    );
+                    
+                    if (s.pending > 0 && !processing) {
+                        processNext();
+                    } else if (s.pending === 0) {
+                        $("#batch_status").append("<br><strong>İşlem tamamlandı!</strong>");
+                        $("#batch_progress").removeClass("active");
+                    }
+                }
+            }, "json");
+        }
+        
+        function processNext() {
+            processing = true;
+            $.get("?mod=catman&action=process_batch&batch_id=" + batch_id + "&user_hash='.$dle_login_hash.'", function(d) {
+                processing = false;
+                if (d.result && d.result.success) {
+                    $("#batch_log").prepend("<div class=\'text-success\'><i class=\'fa fa-check\'></i> Öğe işlendi: Draft ID " + (d.result.draft_id || "-") + "</div>");
+                } else if (d.result && !d.result.completed) {
+                    $("#batch_log").prepend("<div class=\'text-danger\'><i class=\'fa fa-times\'></i> Hata: " + (d.result.error || "Bilinmeyen") + "</div>");
+                }
+                setTimeout(updateBatchStatus, 500);
+            }, "json").fail(function() {
+                processing = false;
+                setTimeout(updateBatchStatus, 2000);
+            });
+        }
+        
+        updateBatchStatus();
+        setInterval(updateBatchStatus, 3000);
+        </script>';
+    } else {
+        // Show batch queue
+        echo '<table class="table table-striped">
+            <thead><tr><th>Batch ID</th><th>Durum</th><th>İlerleme</th><th>Tarih</th></tr></thead><tbody>';
+        
+        $batches = $db->query("SELECT batch_id, COUNT(*) as total, 
+            SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as failed,
+            MIN(created_at) as created
+            FROM " . PREFIX . "_catman_queue GROUP BY batch_id ORDER BY created DESC LIMIT 20");
+        
+        while ($row = $db->get_row($batches)) {
+            $pct = $row['total'] > 0 ? round(($row['completed'] + $row['failed']) / $row['total'] * 100) : 0;
+            $is_done = ($row['completed'] + $row['failed']) >= $row['total'];
+            
+            echo '<tr>
+                <td><a href="?mod=catman&action=batch&batch_id='.$row['batch_id'].'">'.$row['batch_id'].'</a></td>
+                <td>'.($is_done ? '<span class="label label-success">Tamamlandı</span>' : '<span class="label label-warning">Devam ediyor</span>').'</td>
+                <td>
+                    <div class="progress" style="height:20px;width:150px;">
+                        <div class="progress-bar" style="width:'.$pct.'%">'.$pct.'%</div>
+                    </div>
+                </td>
+                <td>'.$row['created'].'</td>
+            </tr>';
+        }
+        echo '</tbody></table>';
+    }
+
+// ============================================================================
+// DRAFTS PAGE
+// ============================================================================
+} elseif ($action == 'drafts') {
+    echo '<div class="alert alert-info alert-styled-left alert-arrow-left alert-component">
+        <h4><i class="fa fa-file-text-o"></i> Taslak İçerikler</h4>
+        <p>Oluşturulan taslakları önizleyebilir, onaylayabilir veya silebilirsiniz.</p>
+    </div>';
+    
+    // Filter
+    $status_filter = isset($_GET['filter']) ? $_GET['filter'] : 'draft';
+    $lang_filter = isset($_GET['lang']) ? $_GET['lang'] : '';
+    
+    $where = "WHERE d.status='$status_filter'";
+    if ($lang_filter) $where .= " AND d.language='$lang_filter'";
+    
+    echo '<div class="well well-sm">
+        <form method="get" class="form-inline">
+            <input type="hidden" name="mod" value="catman">
+            <input type="hidden" name="action" value="drafts">
+            <select name="filter" class="form-control">
+                <option value="draft" '.($status_filter=='draft'?'selected':'').'>Bekleyen Taslaklar</option>
+                <option value="approved" '.($status_filter=='approved'?'selected':'').'>Onaylananlar</option>
+                <option value="revision" '.($status_filter=='revision'?'selected':'').'>Revizyonlar</option>
+            </select>
+            <select name="lang" class="form-control">
+                <option value="">Tüm Diller</option>
+                <option value="tr" '.($lang_filter=='tr'?'selected':'').'>Türkçe</option>
+                <option value="en" '.($lang_filter=='en'?'selected':'').'>English</option>
+                <option value="de" '.($lang_filter=='de'?'selected':'').'>Deutsch</option>
+            </select>
+            <button type="submit" class="btn btn-primary">Filtrele</button>
+        </form>
+    </div>';
+    
+    echo '<table class="table table-striped table-bordered">
+        <thead><tr><th>Kategori</th><th>Başlık</th><th>Dil</th><th>Görsel</th><th>İşlem</th></tr></thead><tbody>';
+    
+    $drafts = $db->query("SELECT d.*, c.name as cat_name FROM " . PREFIX . "_catman_drafts d LEFT JOIN " . PREFIX . "_category c ON d.category_id=c.id $where ORDER BY d.created_at DESC");
+    
+    while ($row = $db->get_row($drafts)) {
+        $image_icon = $row['image_url'] ? '<i class="fa fa-image text-success"></i>' : '<i class="fa fa-image text-muted"></i>';
+        
+        echo '<tr>
+            <td>'.htmlspecialchars($row['cat_name'] ?: 'Kategori #'.$row['category_id']).'</td>
+            <td>'.htmlspecialchars($row['meta_title']).'</td>
+            <td><span class="label label-default">'.htmlspecialchars($row['language']).'</span></td>
+            <td>'.$image_icon.'</td>
+            <td>
+                <button class="btn btn-info btn-sm" onclick="previewDraft('.$row['id'].')"><i class="fa fa-eye"></i></button>
+                <a href="?mod=catman&action=approve_draft&id='.$row['id'].'&user_hash='.$dle_login_hash.'" class="btn btn-success btn-sm" onclick="return confirm(\'Onaylansın mı?\')"><i class="fa fa-check"></i></a>
+                <a href="?mod=catman&action=delete_draft&id='.$row['id'].'&user_hash='.$dle_login_hash.'" class="btn btn-danger btn-sm" onclick="return confirm(\'Silinsin mi?\')"><i class="fa fa-trash"></i></a>
+            </td>
+        </tr>';
+    }
+    echo '</tbody></table>';
+    
+    // Preview Modal
+    echo '<div class="modal fade" id="previewModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header"><button type="button" class="close" data-dismiss="modal">&times;</button><h4 class="modal-title">Taslak Önizleme</h4></div>
+                <div class="modal-body" id="previewContent"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">Kapat</button>
+                </div>
+            </div>
+        </div>
+    </div>';
+    
+    echo '<script>
+    function previewDraft(id) {
+        $.get("?mod=catman&action=preview_draft&id=" + id + "&user_hash='.$dle_login_hash.'", function(d) {
+            if (d.success) {
+                var html = "<table class=\'table\'><tr><th>Meta Başlık</th><td>" + (d.draft.meta_title || "-") + "</td></tr>";
+                html += "<tr><th>Meta Açıklama</th><td>" + (d.draft.meta_descr || "-") + "</td></tr>";
+                html += "<tr><th>Anahtar Kelimeler</th><td>" + (d.draft.keywords || "-") + "</td></tr>";
+                html += "<tr><th>Etiketler</th><td>" + (d.draft.tags || "-") + "</td></tr>";
+                html += "<tr><th>Alt Name</th><td>" + (d.draft.alt_name || "-") + "</td></tr>";
+                html += "<tr><th>İçerik</th><td>" + (d.draft.description || d.draft.full_story || "-") + "</td></tr>";
+                if (d.draft.image_url) html += "<tr><th>Görsel</th><td><img src=\'" + d.draft.image_url + "\' style=\'max-width:300px;\'></td></tr>";
+                html += "</table>";
+                $("#previewContent").html(html);
+                $("#previewModal").modal("show");
+            } else {
+                DLEPush.error(d.error);
+            }
+        }, "json");
+    }
+    </script>';
+
+// ============================================================================
+// TEMPLATES PAGE
+// ============================================================================
+} elseif ($action == 'templates') {
+    echo '<div class="alert alert-info alert-styled-left alert-arrow-left alert-component">
+        <h4><i class="fa fa-file-code-o"></i> İçerik Şablonları</h4>
+        <p>Farklı kategoriler için özelleştirilmiş prompt şablonları oluşturabilirsiniz.</p>
+    </div>';
+    
+    $edit_template = null;
+    if (isset($_GET['edit'])) {
+        $edit_id = intval($_GET['edit']);
+        $edit_template = $db->super_query("SELECT * FROM " . PREFIX . "_catman_templates WHERE id=$edit_id");
+    }
+    
+    // Template Form
+    echo '<div class="panel panel-default">
+        <div class="panel-heading">' . ($edit_template ? 'Şablon Düzenle' : 'Yeni Şablon') . '</div>
+        <div class="panel-body">
+            <form method="POST" action="?mod=catman&action=save_template">
+                <input type="hidden" name="user_hash" value="' . $dle_login_hash . '">
+                <input type="hidden" name="template_id" value="' . ($edit_template ? $edit_template['id'] : '') . '">
+                
+                <div class="row">
+                    <div class="col-sm-6">
+                        <div class="form-group">
+                            <label>Şablon Adı</label>
+                            <input type="text" name="template_name" class="form-control" required value="' . htmlspecialchars($edit_template['name'] ?? '') . '">
+                        </div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="form-group">
+                            <label>Kategoriler (ID, virgülle)</label>
+                            <input type="text" name="template_categories" class="form-control" value="' . htmlspecialchars($edit_template['category_ids'] ?? '') . '" placeholder="1,3,5">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Açıklama</label>
+                    <textarea name="template_description" class="form-control" rows="2">' . htmlspecialchars($edit_template['description'] ?? '') . '</textarea>
+                </div>
+                
+                <div class="row">
+                    <div class="col-sm-6">
+                        <div class="form-group">
+                            <label>Meta Başlık Prompt</label>
+                            <textarea name="prompt_meta_title" class="form-control" rows="2">' . htmlspecialchars($edit_template['prompt_meta_title'] ?? $catman->getSettings()['prompt_meta_title'] ?? '') . '</textarea>
+                        </div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="form-group">
+                            <label>Meta Açıklama Prompt</label>
+                            <textarea name="prompt_meta_descr" class="form-control" rows="2">' . htmlspecialchars($edit_template['prompt_meta_descr'] ?? $catman->getSettings()['prompt_meta_descr'] ?? '') . '</textarea>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-sm-6">
+                        <div class="form-group">
+                            <label>Anahtar Kelime Prompt</label>
+                            <textarea name="prompt_keywords" class="form-control" rows="2">' . htmlspecialchars($edit_template['prompt_keywords'] ?? $catman->getSettings()['prompt_keywords'] ?? '') . '</textarea>
+                        </div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="form-group">
+                            <label>HTML Açıklama Prompt</label>
+                            <textarea name="prompt_description" class="form-control" rows="2">' . htmlspecialchars($edit_template['prompt_description'] ?? $catman->getSettings()['prompt_description'] ?? '') . '</textarea>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-sm-6">
+                        <div class="form-group">
+                            <label>Haber Prompt</label>
+                            <textarea name="prompt_news" class="form-control" rows="3">' . htmlspecialchars($edit_template['prompt_news'] ?? $catman->getSettings()['prompt_news_generation'] ?? '') . '</textarea>
+                        </div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="form-group">
+                            <label>Görsel Prompt</label>
+                            <textarea name="prompt_image" class="form-control" rows="3">' . htmlspecialchars($edit_template['prompt_image'] ?? $catman->getSettings()['prompt_image'] ?? '') . '</textarea>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-sm-3">
+                        <div class="form-group">
+                            <label>Kelime Sınırı</label>
+                            <input type="number" name="word_limit" class="form-control" value="' . ($edit_template['word_limit'] ?? 500) . '">
+                        </div>
+                    </div>
+                    <div class="col-sm-3">
+                        <div class="form-group">
+                            <label>Etiket Sayısı</label>
+                            <input type="number" name="tag_count" class="form-control" value="' . ($edit_template['tag_count'] ?? 10) . '">
+                        </div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="form-group"><br>
+                            <label class="checkbox-inline"><input type="checkbox" name="is_default" ' . (($edit_template['is_default'] ?? 0) ? 'checked' : '') . '> Varsayılan Şablon</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <button type="submit" class="btn btn-primary"><i class="fa fa-save"></i> Kaydet</button>
+                ' . ($edit_template ? '<a href="?mod=catman&action=templates" class="btn btn-default">İptal</a>' : '') . '
+            </form>
+        </div>
+    </div>';
+    
+    // Template List
+    echo '<table class="table table-striped">
+        <thead><tr><th>Ad</th><th>Kategoriler</th><th>Varsayılan</th><th>İşlem</th></tr></thead><tbody>';
+    
+    $templates = $catman->getTemplates();
+    foreach ($templates as $tpl) {
+        echo '<tr>
+            <td>' . htmlspecialchars($tpl['name']) . '</td>
+            <td>' . htmlspecialchars($tpl['category_ids'] ?: 'Tümü') . '</td>
+            <td>' . ($tpl['is_default'] ? '<span class="label label-success">Evet</span>' : '') . '</td>
+            <td>
+                <a href="?mod=catman&action=templates&edit='.$tpl['id'].'" class="btn btn-info btn-sm"><i class="fa fa-edit"></i></a>
+                <a href="?mod=catman&action=delete_template&id='.$tpl['id'].'&user_hash='.$dle_login_hash.'" class="btn btn-danger btn-sm" onclick="return confirm(\'Silinsin mi?\')"><i class="fa fa-trash"></i></a>
+            </td>
+        </tr>';
+    }
+    echo '</tbody></table>';
+
+// ============================================================================
+// SCHEDULES PAGE
+// ============================================================================
+} elseif ($action == 'schedules') {
+    $cron_key = $catman->getSettings()['cron_secret_key'] ?? '';
+    $cron_url = $config['http_home_url'] . 'admin.php?mod=catman&action=run_cron&cron_key=' . htmlspecialchars($cron_key);
+    
+    echo '<div class="alert alert-info alert-styled-left alert-arrow-left alert-component">
+        <h4><i class="fa fa-clock-o"></i> Zamanlanmış Görevler</h4>
+        <p>Otomatik içerik üretimi için zamanlamalar oluşturun.</p>
+        <hr>
+        <h5><i class="fa fa-terminal"></i> Cron Entegrasyonu</h5>
+        <p>Aşağıdaki URL\'yi sunucunuzun cron job\'una ekleyin (her 5 dakikada bir):</p>
+        <pre style="font-size:12px;word-break:break-all;">' . ($cron_key ? 'wget -q -O /dev/null "' . $cron_url . '"' : '<em>Önce Ayarlar sayfasında kaydet butonuna basarak cron anahtarını oluşturun.</em>') . '</pre>
+        <button class="btn btn-sm btn-warning" onclick="runCronNow()"><i class="fa fa-play"></i> Şimdi Çalıştır</button>
+    </div>';
+    
+    echo '<script>
+    function runCronNow() {
+        $.get("?mod=catman&action=run_cron&user_hash=' . $dle_login_hash . '", function(d) {
+            if (d.success) { alert("Zamanlanmış görevler kontrol edildi: " + d.time); } 
+            else { alert("Hata: " + d.error); }
+        }, "json");
+    }
+    </script>';
+    
+    $edit_schedule = null;
+    if (isset($_GET['edit'])) {
+        $edit_id = intval($_GET['edit']);
+        $edit_schedule = $db->super_query("SELECT * FROM " . PREFIX . "_catman_schedules WHERE id=$edit_id");
+    }
+    
+    $templates = $catman->getTemplates();
+    $languages = $catman->getSupportedLanguages();
+    
+    // Schedule Form
+    echo '<div class="panel panel-default">
+        <div class="panel-heading">' . ($edit_schedule ? 'Zamanlama Düzenle' : 'Yeni Zamanlama') . '</div>
+        <div class="panel-body">
+            <form method="POST" action="?mod=catman&action=save_schedule">
+                <input type="hidden" name="user_hash" value="' . $dle_login_hash . '">
+                <input type="hidden" name="schedule_id" value="' . ($edit_schedule ? $edit_schedule['id'] : '') . '">
+                
+                <div class="row">
+                    <div class="col-sm-4">
+                        <div class="form-group">
+                            <label>Zamanlama Adı</label>
+                            <input type="text" name="schedule_name" class="form-control" required value="' . htmlspecialchars($edit_schedule['name'] ?? '') . '">
+                        </div>
+                    </div>
+                    <div class="col-sm-4">
+                        <div class="form-group">
+                            <label>Görev Tipi</label>
+                            <select name="task_type" class="form-control">
+                                <option value="category" ' . (($edit_schedule['task_type'] ?? '') == 'category' ? 'selected' : '') . '>Kategori İçeriği</option>
+                                <option value="batch" ' . (($edit_schedule['task_type'] ?? '') == 'batch' ? 'selected' : '') . '>Toplu İşlem</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="col-sm-4">
+                        <div class="form-group">
+                            <label>Kategoriler (ID)</label>
+                            <input type="text" name="schedule_categories" class="form-control" value="' . htmlspecialchars($edit_schedule['category_ids'] ?? '') . '" placeholder="1,2,3">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-sm-3">
+                        <div class="form-group">
+                            <label>Sıklık</label>
+                            <select name="schedule_type" class="form-control">
+                                <option value="daily" ' . (($edit_schedule['schedule_type'] ?? '') == 'daily' ? 'selected' : '') . '>Günlük</option>
+                                <option value="weekly" ' . (($edit_schedule['schedule_type'] ?? '') == 'weekly' ? 'selected' : '') . '>Haftalık</option>
+                                <option value="monthly" ' . (($edit_schedule['schedule_type'] ?? '') == 'monthly' ? 'selected' : '') . '>Aylık</option>
+                                <option value="hourly" ' . (($edit_schedule['schedule_type'] ?? '') == 'hourly' ? 'selected' : '') . '>Saatlik</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="col-sm-3">
+                        <div class="form-group">
+                            <label>Saat</label>
+                            <input type="time" name="schedule_time" class="form-control" value="' . htmlspecialchars($edit_schedule['schedule_time'] ?? '00:00') . '">
+                        </div>
+                    </div>
+                    <div class="col-sm-3">
+                        <div class="form-group">
+                            <label>Şablon</label>
+                            <select name="schedule_template" class="form-control">
+                                <option value="">-- Varsayılan --</option>';
+                            foreach ($templates as $tpl) {
+                                $sel = ($edit_schedule['template_id'] ?? '') == $tpl['id'] ? 'selected' : '';
+                                echo '<option value="'.$tpl['id'].'" '.$sel.'>'.htmlspecialchars($tpl['name']).'</option>';
+                            }
+                            echo '</select>
+                        </div>
+                    </div>
+                    <div class="col-sm-3">
+                        <div class="form-group">
+                            <label>Dil</label>
+                            <select name="schedule_language" class="form-control">';
+                            foreach ($languages as $code => $name) {
+                                $sel = ($edit_schedule['language'] ?? 'tr') == $code ? 'selected' : '';
+                                echo '<option value="'.$code.'" '.$sel.'>'.$name.'</option>';
+                            }
+                            echo '</select>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="checkbox-inline"><input type="checkbox" name="schedule_generate_image" ' . (($edit_schedule['generate_image'] ?? 0) ? 'checked' : '') . '> Görsel Üret</label>
+                    <label class="checkbox-inline"><input type="checkbox" name="schedule_auto_approve" ' . (($edit_schedule['auto_approve'] ?? 0) ? 'checked' : '') . '> Otomatik Onayla</label>
+                    <label class="checkbox-inline"><input type="checkbox" name="is_active" ' . (($edit_schedule['is_active'] ?? 1) ? 'checked' : '') . '> Aktif</label>
+                </div>
+                
+                <button type="submit" class="btn btn-primary"><i class="fa fa-save"></i> Kaydet</button>
+                ' . ($edit_schedule ? '<a href="?mod=catman&action=schedules" class="btn btn-default">İptal</a>' : '') . '
+            </form>
+        </div>
+    </div>';
+    
+    // Schedule List
+    echo '<table class="table table-striped">
+        <thead><tr><th>Ad</th><th>Tip</th><th>Sıklık</th><th>Son Çalışma</th><th>Sonraki</th><th>Durum</th><th>İşlem</th></tr></thead><tbody>';
+    
+    $schedules = $db->query("SELECT * FROM " . PREFIX . "_catman_schedules ORDER BY id DESC");
+    while ($row = $db->get_row($schedules)) {
+        echo '<tr>
+            <td>' . htmlspecialchars($row['name']) . '</td>
+            <td>' . htmlspecialchars($row['task_type']) . '</td>
+            <td>' . htmlspecialchars($row['schedule_type']) . ' - ' . $row['schedule_time'] . '</td>
+            <td>' . ($row['last_run'] ?: '-') . '</td>
+            <td>' . ($row['next_run'] ?: '-') . '</td>
+            <td>' . ($row['is_active'] ? '<span class="label label-success">Aktif</span>' : '<span class="label label-default">Pasif</span>') . '</td>
+            <td>
+                <a href="?mod=catman&action=toggle_schedule&id='.$row['id'].'&user_hash='.$dle_login_hash.'" class="btn btn-default btn-sm"><i class="fa fa-power-off"></i></a>
+                <a href="?mod=catman&action=schedules&edit='.$row['id'].'" class="btn btn-info btn-sm"><i class="fa fa-edit"></i></a>
+                <a href="?mod=catman&action=delete_schedule&id='.$row['id'].'&user_hash='.$dle_login_hash.'" class="btn btn-danger btn-sm" onclick="return confirm(\'Silinsin mi?\')"><i class="fa fa-trash"></i></a>
+            </td>
+        </tr>';
+    }
+    echo '</tbody></table>';
+    
+    // Cron info
+    echo '<div class="panel panel-default"><div class="panel-body">
+        <h5><i class="fa fa-terminal"></i> Cron Kurulumu</h5>
+        <p>Zamanlanmış görevlerin çalışması için aşağıdaki cron komutunu sunucunuza ekleyin:</p>
+        <code>*/5 * * * * php ' . ROOT_DIR . '/engine/modules/catman_cron.php</code>
+        <p class="text-muted">Veya manuel çalıştır: <a href="?mod=catman&action=run_cron&user_hash='.$dle_login_hash.'" class="btn btn-warning btn-xs" onclick="runCron(); return false;"><i class="fa fa-play"></i> Şimdi Çalıştır</a></p>
+    </div></div>';
+    
+    echo '<script>
+    function runCron() {
+        DLEPush.info("Zamanlanmış görevler çalıştırılıyor...");
+        $.get("?mod=catman&action=run_cron&user_hash='.$dle_login_hash.'", function(d) {
+            if (d.success) {
+                DLEPush.info(d.message);
+                setTimeout(function() { location.reload(); }, 1000);
+            } else {
+                DLEPush.error(d.error);
+            }
+        }, "json");
+    }
+    </script>';
+
+// ============================================================================
+// QUOTA PAGE
+// ============================================================================
+} elseif ($action == 'quota') {
+    echo '<div class="alert alert-info alert-styled-left alert-arrow-left alert-component">
+        <h4><i class="fa fa-sliders"></i> API Kota Yönetimi</h4>
+        <p>Her provider için token, istek ve maliyet limitleri belirleyebilirsiniz.</p>
+    </div>';
+    
+    $providers = ['openai', 'gemini', 'claude', 'qwen'];
+    $quotas = [];
+    
+    foreach ($providers as $provider) {
+        $provider_sql = $db->safesql($provider);
+        $today = date('Y-m-d');
+        $quotas[$provider] = $db->super_query("SELECT * FROM " . PREFIX . "_catman_quota WHERE provider='$provider_sql' ORDER BY period_start DESC LIMIT 1");
+    }
+    
+    echo '<form method="POST" action="?mod=catman&action=save_quota">
+        <input type="hidden" name="user_hash" value="' . $dle_login_hash . '">
+        
+        <div class="table-responsive">
+        <table class="table table-bordered">
+            <thead><tr><th>Provider</th><th>Token Limit</th><th>Token Kullanım</th><th>İstek Limit</th><th>İstek Kullanım</th><th>Maliyet Limit ($)</th><th>Maliyet Kullanım ($)</th><th>Sınırsız</th></tr></thead>
+            <tbody>';
+    
+    foreach ($providers as $provider) {
+        $q = $quotas[$provider];
+        $name = ucfirst($provider);
+        
+        echo '<tr>
+            <td><strong>' . $name . '</strong></td>
+            <td><input type="number" name="' . $provider . '_token_limit" class="form-control" value="' . ($q['token_limit'] ?? 1000000) . '"></td>
+            <td><span class="label label-info">' . number_format($q['tokens_used'] ?? 0) . '</span></td>
+            <td><input type="number" name="' . $provider . '_request_limit" class="form-control" value="' . ($q['request_limit'] ?? 1000) . '"></td>
+            <td><span class="label label-info">' . number_format($q['requests_used'] ?? 0) . '</span></td>
+            <td><input type="number" step="0.01" name="' . $provider . '_cost_limit" class="form-control" value="' . ($q['cost_limit'] ?? 100) . '"></td>
+            <td><span class="label label-warning">$' . number_format($q['cost_used'] ?? 0, 4) . '</span></td>
+            <td><label class="checkbox-inline"><input type="checkbox" name="' . $provider . '_unlimited" ' . (($q['is_unlimited'] ?? 0) ? 'checked' : '') . '> Sınırsız</label></td>
+        </tr>';
+    }
+    
+    echo '</tbody></table></div>';
+    
+    echo '<button type="submit" class="btn btn-primary"><i class="fa fa-save"></i> Kota Ayarlarını Kaydet</button>';
+    echo '</form>';
+
+// ============================================================================
+// STATISTICS PAGE
+// ============================================================================
+} elseif ($action == 'statistics') {
+    echo '<div class="alert alert-info alert-styled-left alert-arrow-left alert-component">
+        <h4><i class="fa fa-bar-chart"></i> Detaylı İstatistikler</h4>
+        <p>API kullanımınızı detaylı olarak analiz edin.</p>
+    </div>';
+    
+    $period = isset($_GET['period']) ? $_GET['period'] : 'month';
+    $stats = $catman->getStatistics($period);
+    
+    // Period selector
+    echo '<div class="well well-sm">
+        <a href="?mod=catman&action=statistics&period=today" class="btn btn-' . ($period == 'today' ? 'primary' : 'default') . '">Bugün</a>
+        <a href="?mod=catman&action=statistics&period=week" class="btn btn-' . ($period == 'week' ? 'primary' : 'default') . '">Son 7 Gün</a>
+        <a href="?mod=catman&action=statistics&period=month" class="btn btn-' . ($period == 'month' ? 'primary' : 'default') . '">Son 30 Gün</a>
+    </div>';
+    
+    $summary = $stats['summary'];
+    
+    // Summary Cards
+    echo '<div class="row">
+        <div class="col-sm-3"><div class="panel panel-default"><div class="panel-body text-center">
+            <h3>' . number_format($summary['total_requests']) . '</h3>
+            <p class="text-muted">Toplam İstek</p>
+        </div></div></div>
+        <div class="col-sm-3"><div class="panel panel-default"><div class="panel-body text-center">
+            <h3>' . number_format($summary['total_tokens']) . '</h3>
+            <p class="text-muted">Toplam Token</p>
+        </div></div></div>
+        <div class="col-sm-3"><div class="panel panel-default"><div class="panel-body text-center">
+            <h3>$' . number_format($summary['total_cost'], 4) . '</h3>
+            <p class="text-muted">Toplam Maliyet</p>
+        </div></div></div>
+        <div class="col-sm-3"><div class="panel panel-default"><div class="panel-body text-center">
+            <h3>' . round($summary['avg_tokens']) . '</h3>
+            <p class="text-muted">Ort. Token/İstek</p>
+        </div></div></div>
+    </div>';
+    
+    // Success Rate
+    $success_rate = $summary['total_requests'] > 0 ? round($summary['successful'] / $summary['total_requests'] * 100, 1) : 0;
+    echo '<div class="row">
+        <div class="col-sm-6"><div class="panel panel-default"><div class="panel-heading">Başarı Oranı</div><div class="panel-body">
+            <div class="progress" style="height:20px; margin-bottom:5px;">
+                <div class="progress-bar progress-bar-success" style="width:' . $success_rate . '%; min-width:2em;" role="progressbar" aria-valuenow="' . $success_rate . '" aria-valuemin="0" aria-valuemax="100"></div>
+            </div>
+            <p class="text-muted" style="margin:0;"><b>' . $success_rate . '%</b> başarı oranı</p>
+            <p class="text-muted">Başarılı: ' . number_format($summary['successful']) . ' | Başarısız: ' . number_format($summary['failed']) . '</p>
+        </div></div></div>
+        <div class="col-sm-6"><div class="panel panel-default"><div class="panel-heading">İçerik Türleri</div><div class="panel-body">';
+        
+        $by_type = $db->query("SELECT content_type, COUNT(*) as count FROM " . PREFIX . "_catman_logs GROUP BY content_type");
+        while ($row = $db->get_row($by_type)) {
+            echo '<span class="label label-primary" style="margin-right:5px;">' . $row['content_type'] . ': ' . $row['count'] . '</span>';
+        }
+        
+        echo '</div></div></div>
+    </div>';
+    
+    // By Model
+    if (!empty($stats['by_model'])) {
+        echo '<div class="panel panel-default"><div class="panel-heading">Model Kullanımı</div><div class="panel-body">';
+        echo '<table class="table"><thead><tr><th>Model</th><th>İstek</th><th>Token</th></tr></thead><tbody>';
+        foreach ($stats['by_model'] as $model) {
+            echo '<tr><td>' . htmlspecialchars($model['model']) . '</td><td>' . number_format($model['count']) . '</td><td>' . number_format($model['tokens']) . '</td></tr>';
+        }
+        echo '</tbody></table></div></div>';
+    }
+    
+    // By Language
+    if (!empty($stats['by_language'])) {
+        echo '<div class="panel panel-default"><div class="panel-heading">Dil Dağılımı</div><div class="panel-body">';
+        foreach ($stats['by_language'] as $lang) {
+            $percent = $summary['total_requests'] > 0 ? round($lang['count'] / $summary['total_requests'] * 100) : 0;
+            echo '<div style="display:inline-block;text-align:center;margin:10px;">
+                <div style="font-size:24px;font-weight:bold;">' . $percent . '%</div>
+                <div class="text-muted">' . htmlspecialchars($lang['language']) . '</div>
+                <div class="text-muted">' . number_format($lang['count']) . ' istek</div>
+            </div>';
+        }
+        echo '</div></div>';
+    }
+    
+    // Daily Chart (Simple)
+    if (!empty($stats['daily'])) {
+        echo '<div class="panel panel-default"><div class="panel-heading">Günlük Kullanım</div><div class="panel-body">';
+        echo '<div style="height:200px;display:flex;align-items:flex-end;gap:2px;">';
+        $max_tokens = max(array_column($stats['daily'], 'tokens')) ?: 1;
+        foreach (array_reverse($stats['daily']) as $day) {
+            $height = ($day['tokens'] / $max_tokens) * 180;
+            echo '<div style="flex:1;background:#337ab7;height:' . $height . 'px;min-height:2px;" title="' . $day['date'] . ': ' . number_format($day['tokens']) . ' tokens"></div>';
+        }
+        echo '</div>';
+        echo '<p class="text-muted text-center" style="margin-top:10px;">Son 30 günün token kullanımı</p>';
+        echo '</div></div>';
+    }
+
+// ============================================================================
+// SETTINGS PAGE
+// ============================================================================
+} elseif ($action == 'settings') {
+    $settings = $catman->getSettings();
+    $current_provider = isset($settings['ai_provider']) ? $settings['ai_provider'] : 'openai';
+    $languages = $catman->getSupportedLanguages();
+    
+    // API key masked değerlerini önceden al
+    $key_openai = $catman->maskApiKey('openai');
+    $key_gemini = $catman->maskApiKey('gemini');
+    $key_qwen   = $catman->maskApiKey('qwen');
+    $key_claude = $catman->maskApiKey('claude');
+    
+    // Selected durumlarını önceden hesapla
+    $sel_openai_p  = $current_provider == 'openai' ? 'selected' : '';
+    $sel_gemini_p  = $current_provider == 'gemini' ? 'selected' : '';
+    $sel_qwen_p    = $current_provider == 'qwen' ? 'selected' : '';
+    $sel_claude_p  = $current_provider == 'claude' ? 'selected' : '';
+    
+    $dm = $settings['default_model'] ?? 'gpt-4o';
+    $sel_gpt4o       = $dm == 'gpt-4o' ? 'selected' : '';
+    $sel_gpt4o_mini  = $dm == 'gpt-4o-mini' ? 'selected' : '';
+    $sel_gpt4_turbo  = $dm == 'gpt-4-turbo' ? 'selected' : '';
+    $sel_o1          = $dm == 'o1' ? 'selected' : '';
+    $sel_o3_mini     = $dm == 'o3-mini' ? 'selected' : '';
+    $sel_gem25f      = $dm == 'gemini-2.5-flash' ? 'selected' : '';
+    $sel_gem20f      = $dm == 'gemini-2.0-flash' ? 'selected' : '';
+    $sel_gem25p      = $dm == 'gemini-2.5-pro' ? 'selected' : '';
+    $sel_gem3flash   = $dm == 'gemini-3-flash-preview' ? 'selected' : '';
+    $sel_gem3pro     = $dm == 'gemini-3-pro-preview' ? 'selected' : '';
+    $sel_claude_haik = $dm == 'claude-haiku-4-5-20251001' ? 'selected' : '';
+    $sel_claude_son  = $dm == 'claude-sonnet-4-5-20250929' ? 'selected' : '';
+    $sel_claude_op45 = $dm == 'claude-opus-4-5-20251101' ? 'selected' : '';
+    $sel_qwen_turbo  = $dm == 'qwen-turbo' ? 'selected' : '';
+    $sel_qwen3_plus  = $dm == 'qwen3-plus' ? 'selected' : '';
+    $sel_qwen3_max   = $dm == 'qwen3-max' ? 'selected' : '';
+    
+    // Ayar değerlerini önceden hazırla
+    $batch_delay = htmlspecialchars($settings['batch_delay'] ?? '3');
+    $prompt_meta_title = htmlspecialchars($settings['prompt_meta_title'] ?? '', ENT_QUOTES, 'UTF-8');
+    $prompt_meta_descr = htmlspecialchars($settings['prompt_meta_descr'] ?? '', ENT_QUOTES, 'UTF-8');
+    $prompt_keywords = htmlspecialchars($settings['prompt_keywords'] ?? '', ENT_QUOTES, 'UTF-8');
+    $prompt_description = htmlspecialchars($settings['prompt_description'] ?? '', ENT_QUOTES, 'UTF-8');
+    $prompt_news_gen = htmlspecialchars($settings['prompt_news_generation'] ?? '', ENT_QUOTES, 'UTF-8');
+    $news_word_limit = $settings['news_word_limit'] ?? 500;
+    $news_tag_count = $settings['news_tag_count'] ?? 10;
+    $image_checked = ($settings['image_enabled'] ?? '1') == '1' ? 'checked' : '';
+    $sel_img_openai = ($settings['image_provider'] ?? 'openai') == 'openai' ? 'selected' : '';
+    $img_size = $settings['image_size'] ?? '1024x1024';
+    $sel_size_sq = $img_size == '1024x1024' ? 'selected' : '';
+    $sel_size_hz = $img_size == '1792x1024' ? 'selected' : '';
+    $sel_size_vt = $img_size == '1024x1792' ? 'selected' : '';
+    $prompt_image = htmlspecialchars($settings['prompt_image'] ?? '', ENT_QUOTES, 'UTF-8');
+    $prompt_rewrite = htmlspecialchars($settings['prompt_rewrite'] ?? '', ENT_QUOTES, 'UTF-8');
+    $prompt_improve = htmlspecialchars($settings['prompt_improve'] ?? '', ENT_QUOTES, 'UTF-8');
+    $prompt_summarize = htmlspecialchars($settings['prompt_summarize'] ?? '', ENT_QUOTES, 'UTF-8');
+    $prompt_expand = htmlspecialchars($settings['prompt_expand'] ?? '', ENT_QUOTES, 'UTF-8');
+    $prompt_translate = htmlspecialchars($settings['prompt_translate'] ?? '', ENT_QUOTES, 'UTF-8');
+    
+    // Dil select options
+    $lang_options = '';
+    foreach ($languages as $code => $name) {
+        $sel = ($settings['default_language'] ?? 'tr') == $code ? 'selected' : '';
+        $lang_options .= "<option value=\"{$code}\" {$sel}>{$name}</option>\n";
+    }
+    
+    echo <<<HTML
+    <form method="POST" action="?mod=catman" class="form-horizontal">
+    <input type="hidden" name="action" value="save_settings">
+    <input type="hidden" name="user_hash" value="{$dle_login_hash}">
+    
+    <div class="panel panel-default">
+        <ul class="nav nav-tabs nav-tabs-solid">
+            <li class="active"><a href="#tab_api" data-toggle="tab">API Bağlantısı</a></li>
+            <li><a href="#tab_cat" data-toggle="tab">Kategori Ayarları</a></li>
+            <li><a href="#tab_news" data-toggle="tab">Haber Ayarları</a></li>
+            <li><a href="#tab_image" data-toggle="tab">Görsel Ayarları</a></li>
+            <li><a href="#tab_revision" data-toggle="tab">Revizyon Ayarları</a></li>
+        </ul>
+        
+        <div class="panel-body tab-content">
+            <!-- TAB 1: API SETTINGS -->
+            <div class="tab-pane active" id="tab_api">
+                <div class="form-group">
+                    <label class="control-label col-md-3">AI Sağlayıcı</label>
+                    <div class="col-md-9">
+                        <select name="ai_provider" class="form-control">
+                            <option value="openai" {$sel_openai_p}>OpenAI</option>
+                            <option value="gemini" {$sel_gemini_p}>Google Gemini</option>
+                            <option value="qwen" {$sel_qwen_p}>Qwen</option>
+                            <option value="claude" {$sel_claude_p}>Claude</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">API Keys</label>
+                    <div class="col-md-9">
+                        <div class="input-group" style="margin-bottom:8px">
+                            <input type="text" name="openai_api_key" id="key_openai" class="form-control" placeholder="OpenAI Key (sk-...)" value="{$key_openai}" readonly>
+                            <span class="input-group-btn">
+                                <button type="button" class="btn btn-default btn-sm" onclick="enableKeyEdit('key_openai')" title="Düzenle"><i class="fa fa-pencil"></i></button>
+                                <button type="button" class="btn btn-danger btn-sm" onclick="deleteApiKey('openai')" title="Sil"><i class="fa fa-trash"></i></button>
+                            </span>
+                        </div>
+                        <div class="input-group" style="margin-bottom:8px">
+                            <input type="text" name="gemini_api_key" id="key_gemini" class="form-control" placeholder="Gemini Key (AIza...)" value="{$key_gemini}" readonly>
+                            <span class="input-group-btn">
+                                <button type="button" class="btn btn-default btn-sm" onclick="enableKeyEdit('key_gemini')" title="Düzenle"><i class="fa fa-pencil"></i></button>
+                                <button type="button" class="btn btn-danger btn-sm" onclick="deleteApiKey('gemini')" title="Sil"><i class="fa fa-trash"></i></button>
+                            </span>
+                        </div>
+                        <div class="input-group" style="margin-bottom:8px">
+                            <input type="text" name="qwen_api_key" id="key_qwen" class="form-control" placeholder="Qwen Key (sk-...)" value="{$key_qwen}" readonly>
+                            <span class="input-group-btn">
+                                <button type="button" class="btn btn-default btn-sm" onclick="enableKeyEdit('key_qwen')" title="Düzenle"><i class="fa fa-pencil"></i></button>
+                                <button type="button" class="btn btn-danger btn-sm" onclick="deleteApiKey('qwen')" title="Sil"><i class="fa fa-trash"></i></button>
+                            </span>
+                        </div>
+                        <div class="input-group">
+                            <input type="text" name="claude_api_key" id="key_claude" class="form-control" placeholder="Claude Key" value="{$key_claude}" readonly>
+                            <span class="input-group-btn">
+                                <button type="button" class="btn btn-default btn-sm" onclick="enableKeyEdit('key_claude')" title="Düzenle"><i class="fa fa-pencil"></i></button>
+                                <button type="button" class="btn btn-danger btn-sm" onclick="deleteApiKey('claude')" title="Sil"><i class="fa fa-trash"></i></button>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">Model</label>
+                    <div class="col-md-9">
+                        <select name="default_model" class="form-control" id="default_model_select">
+                            <optgroup label="OpenAI" data-provider="openai">
+                                <option value="gpt-4o" {$sel_gpt4o}>GPT-4o ✅ Ücretsiz Tier</option>
+                                <option value="gpt-4o-mini" {$sel_gpt4o_mini}>GPT-4o Mini ✅ Ücretsiz Tier</option>
+                                <option value="gpt-4-turbo" {$sel_gpt4_turbo}>GPT-4 Turbo ⚠️ Ücretli</option>
+                                <option value="o1" {$sel_o1}>O1 ⚠️ Ücretli</option>
+                                <option value="o3-mini" {$sel_o3_mini}>O3 Mini ⚠️ Ücretli</option>
+                            </optgroup>
+                            <optgroup label="Google Gemini" data-provider="gemini">
+                                <option value="gemini-2.5-flash" {$sel_gem25f}>Gemini 2.5 Flash ✅ Ücretsiz Tier</option>
+                                <option value="gemini-2.0-flash" {$sel_gem20f}>Gemini 2.0 Flash ✅ Ücretsiz Tier</option>
+                                <option value="gemini-2.5-pro" {$sel_gem25p}>Gemini 2.5 Pro ⚠️ Ücretli</option>
+                                <option value="gemini-3-flash-preview" {$sel_gem3flash}>Gemini 3 Flash ⚠️ Ücretli</option>
+                                <option value="gemini-3-pro-preview" {$sel_gem3pro}>Gemini 3 Pro ⚠️ Ücretli</option>
+                            </optgroup>
+                            <optgroup label="Anthropic Claude" data-provider="claude">
+                                <option value="claude-haiku-4-5-20251001" {$sel_claude_haik}>Claude Haiku 4.5 ✅ En Ucuz</option>
+                                <option value="claude-sonnet-4-5-20250929" {$sel_claude_son}>Claude Sonnet 4.5 ⚠️ Ücretli</option>
+                                <option value="claude-opus-4-5-20251101" {$sel_claude_op45}>Claude Opus 4.5 ⚠️ Ücretli</option>
+                            </optgroup>
+                            <optgroup label="Qwen" data-provider="qwen">
+                                <option value="qwen-turbo" {$sel_qwen_turbo}>Qwen Turbo ✅ Ücretsiz Tier</option>
+                                <option value="qwen3-plus" {$sel_qwen3_plus}>Qwen3 Plus ⚠️ Ücretli</option>
+                                <option value="qwen3-max" {$sel_qwen3_max}>Qwen3 Max ⚠️ Ücretli</option>
+                            </optgroup>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">Varsayılan Dil</label>
+                    <div class="col-md-9">
+                        <select name="default_language" class="form-control">
+                        {$lang_options}
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">Toplu İşlem Gecikme (sn)</label>
+                    <div class="col-md-9">
+                        <input type="number" name="batch_delay" class="form-control" value="{$batch_delay}">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <div class="col-md-offset-3 col-md-9">
+                        <button type="button" class="btn btn-warning" onclick="testConnection()"><i class="fa fa-plug"></i> Bağlantıyı Test Et</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 2: CATEGORY PROMPTS -->
+            <div class="tab-pane" id="tab_cat">
+                <div class="alert alert-info alert-styled-left alert-arrow-left alert-component">
+                    <h4><i class="fa fa-info-circle"></i> Değişkenler</h4>
+                    <ul style="padding-left: 20px;">
+                        <li><b>{cat_name}:</b> Kategori adı</li>
+                        <li><b>{parent_name}:</b> Üst kategori adı</li>
+                    </ul>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">Meta Başlık Prompt</label>
+                    <div class="col-md-9"><textarea name="prompt_meta_title" class="form-control">{$prompt_meta_title}</textarea></div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">Meta Açıklama Prompt</label>
+                    <div class="col-md-9"><textarea name="prompt_meta_descr" class="form-control">{$prompt_meta_descr}</textarea></div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">Anahtar Kelime Prompt</label>
+                    <div class="col-md-9"><textarea name="prompt_keywords" class="form-control">{$prompt_keywords}</textarea></div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">HTML Açıklama Prompt</label>
+                    <div class="col-md-9"><textarea name="prompt_description" class="form-control" rows="3">{$prompt_description}</textarea></div>
+                </div>
+            </div>
+
+            <!-- TAB 3: NEWS PROMPTS -->
+            <div class="tab-pane" id="tab_news">
+                <div class="alert alert-info alert-styled-left alert-arrow-left alert-component">
+                    <h4><i class="fa fa-info-circle"></i> Değişkenler</h4>
+                    <ul style="padding-left: 20px;">
+                        <li><b>{title}:</b> Haber başlığı</li>
+                        <li><b>{word_limit}:</b> Kelime sınırı</li>
+                        <li><b>{tag_count}:</b> Etiket sayısı</li>
+                        <li><b>{language}:</b> Hedef dil</li>
+                    </ul>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">Haber Prompt Şablonu</label>
+                    <div class="col-md-9"><textarea name="prompt_news_generation" class="form-control" rows="5">{$prompt_news_gen}</textarea></div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">Kelime Sınırı</label>
+                    <div class="col-md-9"><input type="number" name="news_word_limit" class="form-control" value="{$news_word_limit}"></div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">Etiket Sayısı</label>
+                    <div class="col-md-9"><input type="number" name="news_tag_count" class="form-control" value="{$news_tag_count}"></div>
+                </div>
+            </div>
+
+            <!-- TAB 4: IMAGE SETTINGS -->
+            <div class="tab-pane" id="tab_image">
+                <div class="form-group">
+                    <label class="control-label col-md-3">Görsel Üretimi</label>
+                    <div class="col-md-9">
+                        <label class="checkbox-inline"><input type="checkbox" name="image_enabled" {$image_checked}> Aktif</label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">Görsel Provider</label>
+                    <div class="col-md-9">
+                        <select name="image_provider" class="form-control">
+                            <option value="openai" {$sel_img_openai}>OpenAI DALL-E</option>
+                        </select>
+                        <p class="text-muted">Şu an sadece DALL-E desteklenmektedir.</p>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">Görsel Boyutu</label>
+                    <div class="col-md-9">
+                        <select name="image_size" class="form-control">
+                            <option value="1024x1024" {$sel_size_sq}>1024x1024 (Kare)</option>
+                            <option value="1792x1024" {$sel_size_hz}>1792x1024 (Yatay)</option>
+                            <option value="1024x1792" {$sel_size_vt}>1024x1792 (Dikey)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">Görsel Prompt Şablonu</label>
+                    <div class="col-md-9"><textarea name="prompt_image" class="form-control" rows="3">{$prompt_image}</textarea></div>
+                </div>
+            </div>
+
+            <!-- TAB 5: REVISION SETTINGS -->
+            <div class="tab-pane" id="tab_revision">
+                <div class="alert alert-info alert-styled-left alert-arrow-left alert-component">
+                    <h4><i class="fa fa-info-circle"></i> Revizyon Sistemi Nasıl Çalışır?</h4>
+                    <p>Taslaklar sayfasında her taslağın yanındaki <b>"Revize Et"</b> butonuna tıkladığınızda aşağıdaki revizyon türlerinden birini seçebilirsiniz. Seçilen prompt şablonu devreye girer ve <b>{content}</b> yerine taslağın mevcut içeriği otomatik yerleştirilir, AI yeni versiyonu üretir.</p>
+                    <hr>
+                    <h4><i class="fa fa-list"></i> Revizyon Türleri</h4>
+                    <ul style="padding-left: 20px;">
+                        <li><b>Yeniden Yaz:</b> Aynı anlamı koruyarak içeriği baştan yazar. Tekrar eden veya sıkıcı içerikler için kullanın.</li>
+                        <li><b>İyileştir:</b> Okunabilirliği ve SEO uyumunu artırır. Mevcut içeriği bozmadan geliştirmek için idealdir.</li>
+                        <li><b>Özetle:</b> Uzun içerikleri kısa ve öz hale getirir. Meta açıklama veya özet üretmek için kullanabilirsiniz.</li>
+                        <li><b>Genişlet:</b> Kısa içeriklere detay ve örnekler ekler. Kelime sayısını artırmak için kullanın.</li>
+                        <li><b>Çevir:</b> İçeriği seçilen dile çevirir. Taslak onaylanmadan önce farklı dil versiyonları üretebilirsiniz.</li>
+                    </ul>
+                    <hr>
+                    <h4><i class="fa fa-code"></i> Prompt Değişkenleri</h4>
+                    <ul style="padding-left: 20px;">
+                        <li><b>{content}:</b> Revize edilecek içerik buraya otomatik eklenir. Her prompt'ta mutlaka bulunmalıdır.</li>
+                        <li><b>{target_language}:</b> Sadece Çeviri prompt'unda kullanılır. Kullanıcının seçtiği hedef dil adı buraya gelir. Örn: <i>Français, Deutsch, English</i></li>
+                    </ul>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">Yeniden Yazma Prompt</label>
+                    <div class="col-md-9"><textarea name="prompt_rewrite" class="form-control">{$prompt_rewrite}</textarea></div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">İyileştirme Prompt</label>
+                    <div class="col-md-9"><textarea name="prompt_improve" class="form-control">{$prompt_improve}</textarea></div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">Özetleme Prompt</label>
+                    <div class="col-md-9"><textarea name="prompt_summarize" class="form-control">{$prompt_summarize}</textarea></div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">Genişletme Prompt</label>
+                    <div class="col-md-9"><textarea name="prompt_expand" class="form-control">{$prompt_expand}</textarea></div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-md-3">Çeviri Prompt</label>
+                    <div class="col-md-9"><textarea name="prompt_translate" class="form-control">{$prompt_translate}</textarea></div>
+                </div>
+            </div>
+        </div>
+        <div class="panel-footer">
+            <button type="submit" class="btn btn-primary"><i class="fa fa-save"></i> Ayarları Kaydet</button>
+        </div>
+    </div>
+    </form>
+    
+    <script>
+    function testConnection() {
+        DLEPush.info("Bağlantı test ediliyor...");
+        $.get("?mod=catman&action=test_connection&user_hash={$dle_login_hash}", function(data){
+            if(data.success) DLEPush.info(data.message);
+            else DLEPush.error(data.error);
+        }, "json").fail(function(){ DLEPush.error("AJAX Hatası"); });
+    }
+
+    // Provider değişince model dropdown filtreleme
+    function filterModels(provider) {
+        var select = document.getElementById("default_model_select");
+        if (!select) return;
+        var optgroups = select.querySelectorAll("optgroup");
+        var firstVisible = null;
+
+        optgroups.forEach(function(group) {
+            var isMatch = group.getAttribute("data-provider") === provider;
+            group.style.display = isMatch ? "" : "none";
+            var options = group.querySelectorAll("option");
+            options.forEach(function(opt) {
+                opt.disabled = !isMatch;
+                if (isMatch && !firstVisible) firstVisible = opt.value;
+            });
+        });
+
+        var currentVal = select.value;
+        var currentOpt = select.querySelector("option[value=\"" + currentVal + "\"]");
+        if (currentOpt && currentOpt.disabled && firstVisible) {
+            select.value = firstVisible;
+        }
+    }
+
+    // Sayfa açılışında filtrele
+    filterModels("{$current_provider}");
+
+    // Provider değişince tetikle
+    $("select[name=ai_provider]").on("change", function() {
+        filterModels(this.value);
+    });
+
+    // API Key yönetimi
+    function enableKeyEdit(id) {
+        var input = document.getElementById(id);
+        input.readOnly = false;
+        input.value = '';
+        input.placeholder = 'Yeni API key girin...';
+        input.focus();
+        input.style.borderColor = '#f0ad4e';
+    }
+
+    function deleteApiKey(provider) {
+        if (!confirm(provider.toUpperCase() + " API keyini silmek istediğinizden emin misiniz?")) return;
+        $.get("?mod=catman&action=delete_api_key&provider=" + provider + "&user_hash={$dle_login_hash}", function(data) {
+            if (data.success) {
+                var inp = document.getElementById("key_" + provider);
+                inp.value = "";
+                inp.readOnly = false;
+                inp.placeholder = provider.charAt(0).toUpperCase() + provider.slice(1) + " Key girin...";
+                DLEPush.info(provider.toUpperCase() + " API key silindi.");
+            } else {
+                DLEPush.error(data.error);
+            }
+        }, "json").fail(function() { DLEPush.error("Bağlantı hatası."); });
+    }
+    </script>
+HTML;
+}
+
+echo '</div></div>';
+echofooter();
+?>]]></replacecode>
+		</operation>
+	</file>
+	<file name="engine/inc/addnews.php">
+		<operation action="replace">
+			<searchcode><![CDATA[<input type="button" onclick="find_relates]]></searchcode>
+			<replacecode><![CDATA[<input type="button" onclick="generateAINews(); return false;" class="btn bg-purple-600 btn-sm btn-raised" value="AI İLE DOLDUR"><input type="button" onclick="find_relates]]></replacecode>
+		</operation>
+		<operation action="replace">
+			<searchcode><![CDATA[echofooter();]]></searchcode>
+			<replacecode><![CDATA[echo <<<HTML
+<script>
+function generateAINews() {
+    var title = $('#title').val();
+    if (title.trim() == '') {
+        catmanNotify('error', 'Lütfen önce bir başlık girin.');
+        return;
+    }
+    
+    // Get language from dropdown if exists
+    var lang = 'tr';
+    if ($('#content_language').length) lang = $('#content_language').val();
+    
+    ShowLoading('');
+    $.get('?mod=catman&action=generate_news&title=' + encodeURIComponent(title) + '&language=' + lang + '&user_hash=' + dle_login_hash, function(data) {
+        HideLoading('');
+        try {
+            var res = (typeof data === 'object') ? data : JSON.parse(data);
+            if (res.success) {
+                // Meta Title & Description
+                if (res.data.meta_title) $('[name=meta_title]').val(res.data.meta_title);
+                if (res.data.meta_descr) $('#autodescr').val(res.data.meta_descr);
+                
+                // Tags
+                if (res.data.tags) {
+                    var tagsInput = $('#tags');
+                    if (tagsInput.length) {
+                         if (tagsInput.data('bs.tokenfield') || tagsInput.data('tokenfield')) {
+                             tagsInput.tokenfield('setTokens', res.data.tags);
+                         } else {
+                             tagsInput.val(res.data.tags);
+                         }
+                    }
+                }
+                
+                // Keywords
+                if (res.data.keywords) {
+                     var keywordsInput = $('#keywords');
+                     if (keywordsInput.length) {
+                          if (keywordsInput.data('bs.tokenfield') || keywordsInput.data('tokenfield')) {
+                              keywordsInput.tokenfield('setTokens', res.data.keywords);
+                          } else {
+                              keywordsInput.val(res.data.keywords);
+                              keywordsInput.trigger('change');
+                          }
+                     }
+                }
+                
+                // Alt Name - başlıktan otomatik slug üret
+                if (res.data.alt_name || title) {
+                    var slugSource = title;
+                    var turkishMap = {'ğ':'g','ü':'u','ş':'s','ı':'i','ö':'o','ç':'c','Ğ':'g','Ü':'u','Ş':'s','İ':'i','Ö':'o','Ç':'c'};
+                    var cleanSlug = slugSource.toLowerCase();
+                    cleanSlug = cleanSlug.replace(/[ğüşıöçĞÜŞİÖÇ]/g, function(m) { return turkishMap[m] || m; });
+                    cleanSlug = cleanSlug.replace(/[^a-z0-9\s-]/g, '').trim();
+                    cleanSlug = cleanSlug.replace(/\s+/g, '-').replace(/-+/g, '-');
+                    var parts = cleanSlug.split('-');
+                    if (parts.length > 5) cleanSlug = parts.slice(0, 5).join('-');
+                    if (cleanSlug.length > 3) {
+                        setTimeout(function() { $('[name=alt_name]').val(cleanSlug); }, 500);
+                        $('[name=alt_name]').val(cleanSlug);
+                    }
+                }
+                
+                // Content Editors
+                if (res.data.short_story) {
+                    if (typeof tinymce !== 'undefined' && tinymce.get('short_story')) tinymce.get('short_story').setContent(res.data.short_story);
+                    else if (typeof CKEDITOR !== 'undefined' && CKEDITOR.instances.short_story) CKEDITOR.instances.short_story.setData(res.data.short_story);
+                    else $('#short_story').val(res.data.short_story);
+                }
+                
+                if (res.data.full_story) {
+                    if (typeof tinymce !== 'undefined' && tinymce.get('full_story')) tinymce.get('full_story').setContent(res.data.full_story);
+                    else if (typeof CKEDITOR !== 'undefined' && CKEDITOR.instances.full_story) CKEDITOR.instances.full_story.setData(res.data.full_story);
+                    else $('#full_story').val(res.data.full_story);
+                }
+                
+                catmanNotify('info', 'İçerik başarıyla üretildi!');
+            } else {
+                catmanNotify('error', res.error || 'Bilinmeyen hata.');
+            }
+        } catch(e) {
+            catmanNotify('error', 'Yanıt işlenemedi: ' + e.message);
+            console.log('RAW response:', data);
+            console.log('Error:', e);
+        }
+    }).fail(function() {
+        HideLoading('');
+        catmanNotify('error', 'Bağlantı hatası.');
+    });
+}
+
+function catmanNotify(type, msg) {
+    if (typeof DLEPush !== 'undefined') {
+        if (type == 'success') type = 'info';
+        if (typeof DLEPush[type] === 'function') { DLEPush[type](msg); return; }
+    }
+    if (typeof Growl !== 'undefined') {
+        if (typeof Growl[type] === 'function') { Growl[type](msg); return; }
+    }
+    alert(msg);
+}
+</script>
+HTML;
+echofooter();]]></replacecode>
+		</operation>
+	</file>
+	<file name="engine/inc/editnews.php">
+		<operation action="replace">
+			<searchcode><![CDATA[<input type="button" onclick="find_relates]]></searchcode>
+			<replacecode><![CDATA[<input type="button" onclick="generateAINews(); return false;" class="btn bg-purple-600 btn-sm btn-raised" value="AI İLE DOLDUR"><input type="button" onclick="find_relates]]></replacecode>
+		</operation>
+		<operation action="replace">
+			<searchcode><![CDATA[echofooter();]]></searchcode>
+			<replacecode><![CDATA[echo <<<HTML
+<script>
+function generateAINews() {
+    var title = $('#title').val();
+    if (title.trim() == '') {
+        catmanNotify('error', 'Lütfen önce bir başlık girin.');
+        return;
+    }
+    
+    var lang = 'tr';
+    if ($('#content_language').length) lang = $('#content_language').val();
+    
+    ShowLoading('');
+    $.get('?mod=catman&action=generate_news&title=' + encodeURIComponent(title) + '&language=' + lang + '&user_hash=' + dle_login_hash, function(data) {
+        HideLoading('');
+        try {
+            var res = (typeof data === 'object') ? data : JSON.parse(data);
+            if (res.success) {
+                if (res.data.meta_title) $('[name=meta_title]').val(res.data.meta_title);
+                if (res.data.meta_descr) $('#autodescr').val(res.data.meta_descr);
+                
+                if (res.data.tags) {
+                    var tagsInput = $('#tags');
+                    if (tagsInput.length) {
+                         if (tagsInput.data('bs.tokenfield') || tagsInput.data('tokenfield')) {
+                             tagsInput.tokenfield('setTokens', res.data.tags);
+                         } else {
+                             tagsInput.val(res.data.tags);
+                         }
+                    }
+                }
+                
+                if (res.data.keywords) {
+                     var keywordsInput = $('#keywords');
+                     if (keywordsInput.length) {
+                          if (keywordsInput.data('bs.tokenfield') || keywordsInput.data('tokenfield')) {
+                              keywordsInput.tokenfield('setTokens', res.data.keywords);
+                          } else {
+                              keywordsInput.val(res.data.keywords);
+                              keywordsInput.trigger('change');
+                          }
+                     }
+                }
+                
+                if (res.data.alt_name || title) {
+                    var slugSource = title;
+                    var turkishMap = {'ğ':'g','ü':'u','ş':'s','ı':'i','ö':'o','ç':'c','Ğ':'g','Ü':'u','Ş':'s','İ':'i','Ö':'o','Ç':'c'};
+                    var cleanSlug = slugSource.toLowerCase();
+                    cleanSlug = cleanSlug.replace(/[ğüşıöçĞÜŞİÖÇ]/g, function(m) { return turkishMap[m] || m; });
+                    cleanSlug = cleanSlug.replace(/[^a-z0-9\s-]/g, '').trim();
+                    cleanSlug = cleanSlug.replace(/\s+/g, '-').replace(/-+/g, '-');
+                    var parts = cleanSlug.split('-');
+                    if (parts.length > 5) cleanSlug = parts.slice(0, 5).join('-');
+                    if (cleanSlug.length > 3) {
+                        setTimeout(function() { $('[name=alt_name]').val(cleanSlug); }, 500);
+                        $('[name=alt_name]').val(cleanSlug);
+                    }
+                }
+                
+                if (res.data.short_story) {
+                    if (typeof tinymce !== 'undefined' && tinymce.get('short_story')) tinymce.get('short_story').setContent(res.data.short_story);
+                    else if (typeof CKEDITOR !== 'undefined' && CKEDITOR.instances.short_story) CKEDITOR.instances.short_story.setData(res.data.short_story);
+                    else $('#short_story').val(res.data.short_story);
+                }
+                
+                if (res.data.full_story) {
+                    if (typeof tinymce !== 'undefined' && tinymce.get('full_story')) tinymce.get('full_story').setContent(res.data.full_story);
+                    else if (typeof CKEDITOR !== 'undefined' && CKEDITOR.instances.full_story) CKEDITOR.instances.full_story.setData(res.data.full_story);
+                    else $('#full_story').val(res.data.full_story);
+                }
+                
+                catmanNotify('info', 'İçerik başarıyla üretildi!');
+            } else {
+                catmanNotify('error', res.error || 'Bilinmeyen hata.');
+            }
+        } catch(e) {
+            catmanNotify('error', 'Yanıt işlenemedi: ' + e.message);
+            console.log('RAW response:', data);
+            console.log('Error:', e);
+        }
+    }).fail(function() {
+        HideLoading('');
+        catmanNotify('error', 'Bağlantı hatası.');
+    });
+}
+
+function catmanNotify(type, msg) {
+    if (typeof DLEPush !== 'undefined') {
+        if (type == 'success') type = 'info';
+        if (typeof DLEPush[type] === 'function') { DLEPush[type](msg); return; }
+    }
+    if (typeof Growl !== 'undefined') {
+        if (typeof Growl[type] === 'function') { Growl[type](msg); return; }
+    }
+    alert(msg);
+}
+</script>
+HTML;
+echofooter();]]></replacecode>
+		</operation>
+	</file>
+	<file name="engine/modules/catman_cron.php">
+		<operation action="create">
+			<searchcode><![CDATA[]]></searchcode>
+			<replacecode><![CDATA[<?php
+/**
+ * DLE AI Studio - Cron Runner
+ * 
+ * Add to crontab:
+ * */5 * * * * php /path/to/engine/modules/catman_cron.php
+ */
+
+define('DATALIFEENGINE', true);
+define('CATMAN_CRON', true);
+define('ROOT_DIR', dirname(dirname(__DIR__)));
+define('ENGINE_DIR', dirname(__DIR__));
+
+require_once ENGINE_DIR . '/classes/mysql.php';
+require_once ENGINE_DIR . '/data/dbconfig.php';
+require_once ENGINE_DIR . '/data/config.php';
+
+// Load CatMan class safely via include (no eval!)
+if (file_exists(ENGINE_DIR . '/inc/catman.php')) {
+    include(ENGINE_DIR . '/inc/catman.php');
+} else {
+    die('CatMan plugin not found.');
+}
+
+$catman = new CatManAI();
+$catman->processScheduledTasks();
+
+echo "CatMan Cron: Processed at " . date('Y-m-d H:i:s') . "\n";
+?>]]></replacecode>
+		</operation>
+	</file>
+</dleplugin>
