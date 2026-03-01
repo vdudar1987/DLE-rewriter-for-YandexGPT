@@ -1902,7 +1902,13 @@ HTML;
 							<div class="form-group">
 							  <label class="control-label col-sm-2">{$lang['edit_et']}</label>
 							  <div class="col-sm-10">
-							<input type="text" dir="auto" class="form-control width-550 position-left" name="title" id="title" value="{$row['title']}" maxlength="250"><input type="button" onclick="find_relates(); return false;" class="visible-lg-inline-block btn bg-info-800 btn-sm btn-raised" value="{$lang['b_find_related']}"><input type="button" id="yagpt-rewrite-btn" onclick="yagptRewriteDraft(); return false;" class="visible-lg-inline-block btn bg-success-600 btn-sm btn-raised" value="AI"><i class="help-button visible-lg-inline-block text-primary-600 fa fa-question-circle position-right" data-rel="popover" data-trigger="hover" data-placement="auto right" data-content="{$lang['hint_title']}" ></i><span id="related_news"></span>
+							<input type="text" dir="auto" class="form-control width-550" name="title" id="title" value="{$row['title']}" maxlength="250">
+							<div class="m-t-10">
+								<input type="button" onclick="find_relates(); return false;" class="btn bg-info-800 btn-sm btn-raised" value="{$lang['b_find_related']}">
+								<input type="button" id="yagpt-rewrite-btn" onclick="yagptRewriteDraft(); return false;" class="btn bg-success-600 btn-sm btn-raised" value="AI">
+								<i class="help-button text-primary-600 fa fa-question-circle position-right" data-rel="popover" data-trigger="hover" data-placement="auto right" data-content="{$lang['hint_title']}" ></i>
+								<span id="related_news"></span>
+							</div>
 							  </div>
 							 </div>
 
