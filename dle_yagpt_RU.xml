@@ -516,6 +516,11 @@ class CatManAI
             // Create new quota period
             $period_end = date('Y-m-d', strtotime('+1 month'));
             $this->db->query("INSERT INTO " . PREFIX . "_catman_quota (provider, period_start, period_end, tokens_used, requests_used, cost_used) VALUES ('$provider', '$today', '$period_end', $tokens, 1, $cost)");
+        }
+    }
+
+    public function checkQuota()
+    {
         $provider = $this->db->safesql($this->provider);
         $today = date('Y-m-d');
         
@@ -1510,6 +1515,9 @@ if ($action == 'generate_news') {
         } else {
             $period_end = date('Y-m-d', strtotime('+1 month'));
             $db->query("INSERT INTO " . PREFIX . "_catman_quota (provider, period_start, period_end, token_limit, request_limit, cost_limit, is_unlimited) VALUES ('$provider_sql', '$today', '$period_end', $token_limit, $request_limit, $cost_limit, $is_unlimited)");
+        }
+    }
+    
     msg("info", "Başarılı", "Kota ayarları kaydedildi!", "?mod=catman&action=quota");
 
 // --- SETTINGS ---
