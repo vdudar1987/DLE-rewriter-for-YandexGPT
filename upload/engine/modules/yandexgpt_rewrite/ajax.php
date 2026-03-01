@@ -2,10 +2,22 @@
 
 require_once __DIR__ . '/class.yandexgpt.php';
 
-$config = require ENGINE_DIR . '/data/yandexgpt_rewrite.php';
-$module = new YandexGptRewrite($config, $pdo ?? null);
+if (!defined('DATALIFEENGINE')) {
+    die('Hacking attempt!');
+}
 
 header('Content-Type: application/json; charset=utf-8');
+
+$userHash = (string)($_POST['user_hash'] ?? '');
+$sessionHash = (string)($_SESSION['dle_user_hash'] ?? '');
+if ($userHash === '' || $sessionHash === '' || !hash_equals($sessionHash, $userHash)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'error' => 'Некорректный CSRF-токен.'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+$config = require ENGINE_DIR . '/data/yandexgpt_rewrite.php';
+$module = new YandexGptRewrite($config, $pdo ?? null);
 
 try {
     $payload = [
